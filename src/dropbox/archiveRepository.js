@@ -9,7 +9,7 @@ function safeSegment(value) {
 export class DropboxArchiveRepository {
   constructor({ getAccessToken, fetchImpl = fetch }) {
     this.getAccessToken = getAccessToken
-    this.fetchImpl = fetchImpl
+    this.fetchImpl = fetchImpl.bind(globalThis)
   }
 
   async ensureFolder(path) {

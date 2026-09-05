@@ -140,3 +140,25 @@ test('saveAttachmentMetadata and saveArchiveIndex write their canonical files', 
     '/System/archive-index.json',
   ])
 })
+
+
+test('invokes browser fetch with the global receiver instead of the repository instance', async () => {
+  async function browserLikeFetch(url) {
+    if (this !== globalThis) throw new TypeError('Illegal invocation')
+    assert.equal(url, 'https://content.dropboxapi.com/2/files/download')
+    return new Response(JSON.stringify({ error_summary: 'path/not_found/..' }), {
+      status: 409,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'access-token',
+    fetchImpl: browserLikeFetch,
+  })
+
+  assert.deepEqual(await repo.getArchiveIndex(), {
+    archiveIndexVersion: 1,
+    conversations: {},
+  })
+})

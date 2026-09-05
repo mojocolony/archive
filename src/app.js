@@ -26,7 +26,7 @@ import {
   renderConversationPage,
 } from './ui.js'
 
-const VERSION = '0.2.4'
+const VERSION = '0.2.5'
 const root = document.getElementById('app')
 
 const state = {

@@ -107,3 +107,13 @@ test('searchDocuments favors user-message matches over assistant-only matches', 
   const results = searchDocuments([assistantMatch, userMatch], 'exposure compensation')
   assert.deepEqual(results.map(result => result.conversationId), ['user-match', 'assistant-match'])
 })
+
+
+test('searchDocuments does not let a shorter indexed word satisfy a more specific query', () => {
+  const document = buildSearchDocument(
+    indexEntry({ conversationId: 'stream-only', title: 'Video setup' }),
+    sourceConversation({ title: 'Video setup', user: 'Stream video to the TV', assistant: 'Use the streaming device.' }),
+  )
+
+  assert.equal(searchDocuments([document], 'Podstream').length, 0)
+})

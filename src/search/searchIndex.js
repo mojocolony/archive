@@ -46,7 +46,7 @@ function fuzzyLimit(term) {
 
 function tokenMatchesTerm(token, term) {
   if (!term) return true
-  if (token.includes(term) || term.includes(token) && token.length >= 4) return true
+  if (token.includes(term)) return true
   const limit = fuzzyLimit(term)
   return limit > 0 && levenshteinDistance(token, term, limit) <= limit
 }

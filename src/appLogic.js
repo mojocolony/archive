@@ -87,6 +87,26 @@ export function progressFromCommitEvent(event) {
     }
   }
 
+  if (event.stage === 'resume') {
+    const total = Number(event.total ?? 0)
+    const skipped = Number(event.skipped ?? 0)
+    return {
+      label: 'Checking existing uploads…',
+      detail: `${skipped} of ${total} conversations already safely stored`,
+      percent: total > 0 ? 100 : null,
+    }
+  }
+
+  if (event.stage === 'conversation-start') {
+    const total = Number(event.total ?? 0)
+    const position = Number(event.position ?? 1)
+    return {
+      label: `Saving conversation ${position} of ${total}…`,
+      detail: String(event.title ?? event.conversationId ?? ''),
+      percent: total > 0 ? Math.round(((position - 1) / total) * 100) : null,
+    }
+  }
+
   if (event.stage === 'conversations') {
     const total = Number(event.total ?? 0)
     const completed = Number(event.completed ?? 0)

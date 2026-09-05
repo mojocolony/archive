@@ -108,3 +108,83 @@ test('commitParsedExport uploads changed conversations with bounded concurrency'
   assert.equal(maxActive > 1, true)
   assert.equal(maxActive <= 3, true)
 })
+
+test('commitParsedExport resumes a partial import by skipping complete content-addressed versions already in Dropbox', async () => {
+  const calls = []
+  const repository = {
+    ensureArchiveStructure: async () => calls.push('ensure'),
+    getExistingConversationVersions: async () => new Set(['new--n1']),
+    saveConversationVersion: async conversation => calls.push(`conversation:${conversation.conversationId}`),
+    saveAttachmentMetadata: async () => calls.push('attachments'),
+    saveArchiveIndex: async () => calls.push('index'),
+  }
+  const db = { clear: async () => {}, put: async () => {} }
+  const previousIndex = { archiveIndexVersion: 1, conversations: {} }
+  const preview = {
+    newIds: ['new', 'changed'],
+    updatedIds: [],
+    anomalyWarning: null,
+  }
+  const progress = []
+
+  const result = await commitParsedExport({
+    parsedExport: parsedExport(),
+    previousIndex,
+    preview,
+    repository,
+    db,
+    importId: 'resume-1',
+    onProgress: event => progress.push(event),
+  })
+
+  assert.equal(calls.includes('conversation:new'), false)
+  assert.equal(calls.includes('conversation:changed'), true)
+  assert.equal(calls.at(-1), 'index')
+  assert.equal(result.uploadedConversationCount, 1)
+  assert.equal(result.skippedExistingConversationCount, 1)
+  assert.equal(progress.some(event => event.stage === 'resume' && event.skipped === 1), true)
+})
+
+test('commitParsedExport reports the conversation about to upload so a stalled item is identifiable', async () => {
+  const events = []
+  const repository = {
+    ensureArchiveStructure: async () => {},
+    getExistingConversationVersions: async () => new Set(),
+    saveConversationVersion: async () => {},
+    saveAttachmentMetadata: async () => {},
+    saveArchiveIndex: async () => {},
+  }
+
+  await commitParsedExport({
+    parsedExport: parsedExport(),
+    previousIndex: { archiveIndexVersion: 1, conversations: {} },
+    preview: { newIds: ['new'], updatedIds: [], anomalyWarning: null },
+    repository,
+    db: { clear: async () => {}, put: async () => {} },
+    onProgress: event => events.push(event),
+  })
+
+  const starting = events.find(event => event.stage === 'conversation-start')
+  assert.equal(starting.conversationId, 'new')
+  assert.equal(starting.title, 'New')
+  assert.equal(starting.position, 1)
+  assert.equal(starting.total, 1)
+})
+
+test('commitParsedExport names the conversation when retries are exhausted', async () => {
+  const repository = {
+    ensureArchiveStructure: async () => {},
+    getExistingConversationVersions: async () => new Set(),
+    saveConversationVersion: async () => { throw new Error('Dropbox request timed out after 45 seconds') },
+    saveAttachmentMetadata: async () => {},
+    saveArchiveIndex: async () => {},
+  }
+
+  await assert.rejects(() => commitParsedExport({
+    parsedExport: parsedExport(),
+    previousIndex: { archiveIndexVersion: 1, conversations: {} },
+    preview: { newIds: ['new'], updatedIds: [], anomalyWarning: null },
+    repository,
+    db: { clear: async () => {}, put: async () => {} },
+  }), /New.*new.*timed out/i)
+})

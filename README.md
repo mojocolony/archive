@@ -1,8 +1,8 @@
-# Archive — v0.2.2 Conversation Importer
+# Archive — v0.2.3 Resilient Import
 
-Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. v0.2.2 is the first build that performs a **real conversation import**.
+Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. v0.2.3 makes the real Dropbox importer **resumable and failure-bounded** after the first large-account import exposed a hung Dropbox request.
 
-## What v0.2.2 does
+## What v0.2.3 does
 
 - Reads the official ChatGPT export ZIP locally in the browser.
 - Handles ZIP64 exports without loading the multi-gigabyte ZIP into memory.
@@ -24,7 +24,14 @@ Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT
 - Writes the archive index **last**, making it the commit point for the import.
 - Mirrors the committed archive index into local IndexedDB as rebuildable derived data.
 
-## v0.2.2 deliberately does not yet
+
+## Resilient import behavior
+
+Before uploading changed conversations, Archive now inventories the content-addressed JSON and Markdown versions already present in Dropbox. A conversation is skipped only when **both** files exist. This allows an interrupted first import to resume without rewriting hundreds of completed conversations.
+
+Dropbox requests now have a 45-second timeout and retry transient network failures, HTTP 429 responses, and server-side 5xx responses with short backoff delays. If retries are exhausted, the import stops before the authoritative archive index is written and identifies the conversation that failed. Running the import again resumes from the completed content-addressed pairs already in Dropbox.
+
+## v0.2.3 deliberately does not yet
 
 - upload the 3+ GB of binary `.dat` attachment payloads
 - retain `latest.zip` / `previous.zip` in Dropbox
@@ -95,6 +102,6 @@ npm test
 The core parser, ZIP64 reader, active-branch reconstruction, privacy filtering, merge logic, Dropbox repository, PKCE flow, and UI rendering are covered with Node's built-in test runner.
 
 
-## v0.2.2 cache recovery
+## Cache recovery
 
 If a previous service worker serves an older Archive build after the local database has already upgraded, visit `reset.html` once. It unregisters Archive service workers and clears only `archive-shell-*` caches; it does not delete IndexedDB or Dropbox settings.

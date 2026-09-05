@@ -67,3 +67,22 @@ test('parse and commit progress map to user-facing stages', () => {
   })
   assert.equal(progressFromCommitEvent({ stage: 'commit', completed: 0, total: 1 }).label, 'Committing archive index…')
 })
+
+test('commit progress explains resume scanning and identifies the conversation currently being saved', () => {
+  assert.deepEqual(progressFromCommitEvent({ stage: 'resume', completed: 741, total: 741, skipped: 739 }), {
+    label: 'Checking existing uploads…',
+    detail: '739 of 741 conversations already safely stored',
+    percent: 100,
+  })
+
+  assert.deepEqual(progressFromCommitEvent({
+    stage: 'conversation-start',
+    position: 740,
+    total: 741,
+    title: 'Example conversation',
+  }), {
+    label: 'Saving conversation 740 of 741…',
+    detail: 'Example conversation',
+    percent: Math.round((739 / 741) * 100),
+  })
+})

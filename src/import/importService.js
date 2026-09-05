@@ -1,5 +1,13 @@
 import { buildCommittedIndex } from './importMerge.js'
 
+function safeSegment(value) {
+  return String(value).replace(/[^A-Za-z0-9._-]/g, '_')
+}
+
+function conversationVersionKey(conversation) {
+  return `${safeSegment(conversation.conversationId)}--${safeSegment(conversation.fingerprint)}`
+}
+
 export async function commitParsedExport({
   parsedExport,
   previousIndex,
@@ -22,26 +30,63 @@ export async function commitParsedExport({
   onProgress({ stage: 'prepare', completed: 0, total: changedIds.length })
   await repository.ensureArchiveStructure()
 
+  const existingVersions = typeof repository.getExistingConversationVersions === 'function'
+    ? await repository.getExistingConversationVersions()
+    : new Set()
+
+  const uploadTasks = []
+  let skippedExisting = 0
+  for (let index = 0; index < changedIds.length; index += 1) {
+    const conversationId = changedIds[index]
+    const conversation = byId.get(conversationId)
+    if (!conversation) throw new Error(`Import preview references unknown conversation ${conversationId}`)
+
+    if (existingVersions.has(conversationVersionKey(conversation))) {
+      skippedExisting += 1
+    } else {
+      uploadTasks.push({ conversation, position: index + 1 })
+    }
+  }
+
+  onProgress({
+    stage: 'resume',
+    completed: changedIds.length,
+    total: changedIds.length,
+    skipped: skippedExisting,
+  })
+
   let cursor = 0
-  let completed = 0
-  const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, changedIds.length || 1))
+  let completedUploads = 0
+  const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, uploadTasks.length || 1))
 
   async function uploadWorker() {
     while (true) {
       const index = cursor
       cursor += 1
-      if (index >= changedIds.length) return
+      if (index >= uploadTasks.length) return
 
-      const conversationId = changedIds[index]
-      const conversation = byId.get(conversationId)
-      if (!conversation) throw new Error(`Import preview references unknown conversation ${conversationId}`)
-      await repository.saveConversationVersion(conversation)
-      completed += 1
+      const { conversation, position } = uploadTasks[index]
+      onProgress({
+        stage: 'conversation-start',
+        position,
+        total: changedIds.length,
+        conversationId: conversation.conversationId,
+        title: conversation.title,
+      })
+
+      try {
+        await repository.saveConversationVersion(conversation)
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(`Failed to save “${conversation.title || 'Untitled'}” (${conversation.conversationId}): ${detail}`)
+      }
+
+      completedUploads += 1
       onProgress({
         stage: 'conversations',
-        completed,
+        completed: skippedExisting + completedUploads,
         total: changedIds.length,
-        conversationId,
+        conversationId: conversation.conversationId,
       })
     }
   }
@@ -90,6 +135,7 @@ export async function commitParsedExport({
     importId,
     importedAt,
     index,
-    uploadedConversationCount: changedIds.length,
+    uploadedConversationCount: uploadTasks.length,
+    skippedExistingConversationCount: skippedExisting,
   }
 }

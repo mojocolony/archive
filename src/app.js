@@ -21,7 +21,7 @@ import {
   renderSettingsPage,
 } from './ui.js'
 
-const VERSION = '0.2.2'
+const VERSION = '0.2.3'
 const root = document.getElementById('app')
 
 const state = {

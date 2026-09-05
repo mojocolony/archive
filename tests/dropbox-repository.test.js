@@ -162,3 +162,92 @@ test('invokes browser fetch with the global receiver instead of the repository i
     conversations: {},
   })
 })
+
+test('retries transient Dropbox failures before succeeding', async () => {
+  let attempts = 0
+  const delays = []
+  const fakeFetch = async () => {
+    attempts += 1
+    if (attempts === 1) return new Response('temporary', { status: 503 })
+    return new Response('{}', { status: 200 })
+  }
+
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'token',
+    fetchImpl: fakeFetch,
+    retryDelaysMs: [7],
+    sleepImpl: async ms => delays.push(ms),
+  })
+
+  await repo.uploadText('/Archive/test.txt', 'hello')
+
+  assert.equal(attempts, 2)
+  assert.deepEqual(delays, [7])
+})
+
+test('times out a hung Dropbox request instead of waiting forever', async () => {
+  let attempts = 0
+  const fakeFetch = async (_url, options) => {
+    attempts += 1
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        const error = new Error('aborted')
+        error.name = 'AbortError'
+        reject(error)
+      }, { once: true })
+    })
+  }
+
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'token',
+    fetchImpl: fakeFetch,
+    requestTimeoutMs: 5,
+    retryDelaysMs: [0],
+    sleepImpl: async () => {},
+  })
+
+  await assert.rejects(
+    () => repo.uploadText('/Archive/test.txt', 'hello'),
+    /timed out/i,
+  )
+  assert.equal(attempts, 2)
+})
+
+test('detects only conversation versions whose JSON and Markdown are both already in Dropbox', async () => {
+  const calls = []
+  const fakeFetch = async (url, options) => {
+    calls.push({ url, options })
+    assert.equal(url, 'https://api.dropboxapi.com/2/files/list_folder')
+    const body = JSON.parse(options.body)
+
+    if (body.path === '/Archive/Conversations') {
+      return new Response(JSON.stringify({
+        entries: [
+          { '.tag': 'file', path_display: '/Archive/Conversations/c1--f1.json' },
+          { '.tag': 'file', path_display: '/Archive/Conversations/c2--f2.json' },
+        ],
+        has_more: false,
+      }), { status: 200 })
+    }
+
+    if (body.path === '/Archive/Markdown') {
+      return new Response(JSON.stringify({
+        entries: [
+          { '.tag': 'file', path_display: '/Archive/Markdown/c1--f1.md' },
+        ],
+        has_more: false,
+      }), { status: 200 })
+    }
+
+    throw new Error(`Unexpected path ${body.path}`)
+  }
+
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'token',
+    fetchImpl: fakeFetch,
+  })
+
+  const versions = await repo.getExistingConversationVersions()
+  assert.deepEqual([...versions], ['c1--f1'])
+  assert.equal(calls.length, 2)
+})

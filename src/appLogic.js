@@ -1,7 +1,27 @@
+export function parseAppRoute(hash) {
+  const value = String(hash ?? '')
+  const raw = value.startsWith('#/') ? value.slice(2) : ''
+  const [pathPart, queryPart = ''] = raw.split('?', 2)
+  const params = new URLSearchParams(queryPart)
+
+  if (pathPart === 'import') return { name: 'import' }
+  if (pathPart === 'settings') return { name: 'settings' }
+  if (pathPart === 'conversations') return { name: 'conversations' }
+  if (pathPart.startsWith('conversation/')) {
+    const encodedId = pathPart.slice('conversation/'.length)
+    if (!encodedId) return { name: 'home' }
+    return {
+      name: 'conversation',
+      conversationId: decodeURIComponent(encodedId),
+      query: params.get('q') ?? '',
+      messageId: params.get('m') ?? '',
+    }
+  }
+  return { name: 'home' }
+}
+
 export function routeFromHash(hash) {
-  if (hash === '#/import') return 'import'
-  if (hash === '#/settings') return 'settings'
-  return 'home'
+  return parseAppRoute(hash).name
 }
 
 function compactIso(iso) {
@@ -134,4 +154,44 @@ export function progressFromCommitEvent(event) {
   }
 
   return { label: 'Importing…', detail: '', percent: null }
+}
+
+
+export function progressFromSearchIndexEvent(event) {
+  const total = Number(event.total ?? 0)
+  const completed = Number(event.completed ?? 0)
+
+  if (event.stage === 'prepare') {
+    return {
+      label: 'Preparing local search index…',
+      detail: 'Search data stays on this device.',
+      percent: total > 0 ? 0 : null,
+    }
+  }
+
+  if (event.stage === 'conversation-start') {
+    return {
+      label: 'Building local search index…',
+      detail: String(event.title ?? event.conversationId ?? ''),
+      percent: total > 0 ? Math.round((completed / total) * 100) : null,
+    }
+  }
+
+  if (event.stage === 'conversations') {
+    return {
+      label: 'Building local search index…',
+      detail: `${completed} of ${total} conversations indexed`,
+      percent: total > 0 ? Math.round((completed / total) * 100) : null,
+    }
+  }
+
+  if (event.stage === 'complete') {
+    return {
+      label: 'Local search index ready',
+      detail: `${completed} conversations indexed on this device`,
+      percent: 100,
+    }
+  }
+
+  return { label: 'Building local search index…', detail: '', percent: null }
 }

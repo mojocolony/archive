@@ -2,9 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { ARCHIVE_DB_VERSION, ARCHIVE_STORE_DEFINITIONS } from '../src/local/db.js'
 
-test('local Archive schema includes a rebuildable archiveIndex store in version 2', () => {
-  assert.equal(ARCHIVE_DB_VERSION, 2)
+test('local Archive schema includes disposable search stores in version 3', () => {
+  assert.equal(ARCHIVE_DB_VERSION, 3)
   assert.deepEqual(ARCHIVE_STORE_DEFINITIONS.archiveIndex, { keyPath: 'conversationId' })
+  assert.deepEqual(ARCHIVE_STORE_DEFINITIONS.searchDocuments, { keyPath: 'conversationId' })
+  assert.deepEqual(ARCHIVE_STORE_DEFINITIONS.searchMeta, { keyPath: 'key' })
 })
 
 test('database open retries without a requested version after VersionError from a newer existing database', async () => {

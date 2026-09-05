@@ -10,6 +10,9 @@ test('browser controller uses modular local, Dropbox, and import services withou
   assert.match(source, /commitParsedExport/)
   assert.match(source, /DropboxSession/)
   assert.match(source, /DropboxArchiveRepository/)
+  assert.match(source, /buildLocalSearchIndex/)
+  assert.match(source, /getLocalSearchStatus/)
+  assert.match(source, /searchDocuments/)
   assert.equal(source.includes('localStorage'), false)
 })
 

@@ -1,10 +1,12 @@
 const DB_NAME = 'archive'
-export const ARCHIVE_DB_VERSION = 2
+export const ARCHIVE_DB_VERSION = 3
 export const ARCHIVE_STORE_DEFINITIONS = {
   settings: { keyPath: 'key' },
   imports: { keyPath: 'id' },
   metadata: { keyPath: 'conversationId' },
   archiveIndex: { keyPath: 'conversationId' },
+  searchDocuments: { keyPath: 'conversationId' },
+  searchMeta: { keyPath: 'key' },
 }
 
 function requestAsPromise(request) {

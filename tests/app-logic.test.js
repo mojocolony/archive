@@ -9,13 +9,17 @@ import {
   progressFromParseEvent,
   progressFromCommitEvent,
   tokenIsUsable,
+  parseAppRoute,
+  progressFromSearchIndexEvent,
 } from '../src/appLogic.js'
 
-test('routeFromHash recognizes only the first-slice routes', () => {
+test('routeFromHash recognizes browse and conversation routes', () => {
   assert.equal(routeFromHash(''), 'home')
   assert.equal(routeFromHash('#/'), 'home')
   assert.equal(routeFromHash('#/import'), 'import')
   assert.equal(routeFromHash('#/settings'), 'settings')
+  assert.equal(routeFromHash('#/conversations'), 'conversations')
+  assert.equal(routeFromHash('#/conversation/c-1'), 'conversation')
   assert.equal(routeFromHash('#/unknown'), 'home')
 })
 
@@ -85,4 +89,18 @@ test('commit progress explains resume scanning and identifies the conversation c
     detail: 'Example conversation',
     percent: Math.round((739 / 741) * 100),
   })
+})
+
+
+test('parseAppRoute decodes conversation id and local search deep-link parameters', () => {
+  assert.deepEqual(parseAppRoute('#/conversation/c%2F1?q=dynamic%20range&m=m%201'), {
+    name: 'conversation', conversationId: 'c/1', query: 'dynamic range', messageId: 'm 1',
+  })
+})
+
+test('search-index progress maps local build stages without implying an upload', () => {
+  assert.deepEqual(progressFromSearchIndexEvent({ stage: 'conversations', completed: 25, total: 100 }), {
+    label: 'Building local search index…', detail: '25 of 100 conversations indexed', percent: 25,
+  })
+  assert.equal(progressFromSearchIndexEvent({ stage: 'complete', completed: 100, total: 100 }).label, 'Local search index ready')
 })

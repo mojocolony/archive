@@ -1,6 +1,6 @@
 {
   "name": "archive-chatgpt-dashboard",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "description": "Privacy-first local/Dropbox dashboard for ChatGPT exports",

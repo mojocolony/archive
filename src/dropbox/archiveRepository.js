@@ -223,6 +223,11 @@ export class DropboxArchiveRepository {
     return index ?? { archiveIndexVersion: 1, conversations: {} }
   }
 
+  async getConversationSource(path) {
+    if (!path) throw new Error('Conversation source path is required')
+    return this.downloadJson(path)
+  }
+
   async saveInspectionReport(importId, report) {
     await this.ensureFolder('/System')
     await this.ensureFolder('/System/inspection')

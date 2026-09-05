@@ -18,8 +18,67 @@ export function formatBytes(bytes) {
 }
 
 function navLink(route, href, label) {
-  const active = route === href.replace('#/', '') || (route === 'home' && href === '#/')
+  const target = href.replace('#/', '') || 'home'
+  const active = route === target
+    || (route === 'home' && href === '#/')
+    || (route === 'conversation' && target === 'conversations')
   return `<a class="nav-link${active ? ' is-active' : ''}" href="${href}">${escapeHtml(label)}</a>`
+}
+
+function formatDateValue(value, { includeTime = false } = {}) {
+  if (value == null || value === '') return 'Unknown date'
+  let date
+  if (typeof value === 'number') {
+    date = new Date(value < 1e12 ? value * 1000 : value)
+  } else {
+    date = new Date(value)
+  }
+  if (Number.isNaN(date.getTime())) return escapeHtml(String(value))
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: 'short', day: 'numeric',
+    ...(includeTime ? { hour: 'numeric', minute: '2-digit' } : {}),
+  }).format(date)
+}
+
+function encodeConversationHref(conversationId, query = '', messageId = '') {
+  let href = `#/conversation/${encodeURIComponent(conversationId)}`
+  const params = []
+  if (query) params.push(`q=${encodeURIComponent(query)}`)
+  if (messageId) params.push(`m=${encodeURIComponent(messageId)}`)
+  if (params.length) href += `?${params.join('&')}`
+  return escapeHtml(href)
+}
+
+function resultMeta(result) {
+  const labels = []
+  if (result.isStarred) labels.push('Starred')
+  if (result.isArchived) labels.push('Archived')
+  if (result.presentInLatestExport === false) labels.push('Archive only')
+  return labels
+}
+
+function renderResultRow(result, query = '') {
+  const first = result.excerpts?.[0] ?? null
+  const href = encodeConversationHref(result.conversationId, query, first?.messageId ?? '')
+  const excerpts = (result.excerpts ?? []).map(excerpt => `
+    <div class="search-excerpt">
+      <span class="excerpt-role">${excerpt.role === 'user' ? 'You' : 'ChatGPT'}</span>
+      <span>${escapeHtml(excerpt.text)}</span>
+    </div>
+  `).join('')
+  const labels = resultMeta(result)
+  return `
+    <article class="conversation-row search-result-row">
+      <a class="conversation-row-link" href="${href}">
+        <div class="conversation-row-main">
+          <h3>${escapeHtml(result.title || 'Untitled conversation')}</h3>
+          <p class="conversation-date">Updated ${formatDateValue(result.updateTime)}</p>
+          ${labels.length ? `<div class="row-badges">${labels.map(label => `<span>${escapeHtml(label)}</span>`).join('')}</div>` : ''}
+        </div>
+        ${excerpts ? `<div class="search-excerpts">${excerpts}</div>` : ''}
+      </a>
+    </article>
+  `
 }
 
 export function renderAppShell({ route, content, version }) {
@@ -27,11 +86,12 @@ export function renderAppShell({ route, content, version }) {
     <div class="app-shell">
       <aside class="sidebar">
         <a class="brand" href="#/" aria-label="Archive home">
-          <span class="brand-mark" aria-hidden="true">A</span>
+          <span class="brand-mark" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-package-open"><path d="M12 22v-9"/><path d="M15.17 2.21a1.67 1.67 0 0 1 1.63 0L21 4.57a1.93 1.93 0 0 1 0 3.36L8.82 14.79a1.655 1.655 0 0 1-1.64 0L3 12.43a1.93 1.93 0 0 1 0-3.36z"/><path d="M20 13v3.87a2.06 2.06 0 0 1-1.11 1.83l-6 3.08a1.93 1.93 0 0 1-1.78 0l-6-3.08A2.06 2.06 0 0 1 4 16.87V13"/><path d="M21 12.43a1.93 1.93 0 0 0 0-3.36L8.83 2.2a1.64 1.64 0 0 0-1.63 0L3 4.57a1.93 1.93 0 0 0 0 3.36l12.18 6.86a1.636 1.636 0 0 0 1.63 0z"/></svg></span>
           <span>Archive</span>
         </a>
         <nav class="primary-nav" aria-label="Primary">
           ${navLink(route, '#/', 'Home')}
+          ${navLink(route, '#/conversations', 'All Conversations')}
           ${navLink(route, '#/import', 'Import')}
           ${navLink(route, '#/settings', 'Settings')}
         </nav>
@@ -42,42 +102,90 @@ export function renderAppShell({ route, content, version }) {
   `
 }
 
-export function renderHomePage({ lastInspection, dropboxConnected }) {
+export function renderHomePage({
+  lastInspection,
+  dropboxConnected,
+  searchStatus = { state: 'missing', indexedCount: 0, total: 0, builtAt: null },
+  searchQuery = '',
+  searchResults = [],
+}) {
   const lastDate = lastInspection?.importedAt ?? lastInspection?.inspectedAt ?? null
   const imported = lastInspection?.status === 'imported'
+  const conversationCount = lastInspection?.conversationCount ?? searchStatus.total ?? 0
   const activityTitle = imported
-    ? `${escapeHtml(lastInspection.conversationCount ?? 0)} conversations`
+    ? `${escapeHtml(conversationCount)} conversations`
     : lastInspection
       ? 'Export analyzed'
       : 'No export imported yet'
-  const activityDetail = lastInspection
-    ? `${escapeHtml(lastInspection.sourceFileName)}${lastDate ? ` · ${escapeHtml(String(lastDate).slice(0, 10))}` : ''}`
-    : 'Choose an official ChatGPT export to begin.'
+  const activityDetail = lastDate ? `Last imported ${formatDateValue(lastDate)}` : 'Choose an official ChatGPT export to begin.'
+  const sourceDetails = lastInspection?.sourceFileName
+    ? `<details class="source-details"><summary>Import details</summary><p>${escapeHtml(lastInspection.sourceFileName)}</p></details>`
+    : ''
+
+  const searchReady = searchStatus.state === 'current'
+  const indexAction = searchStatus.state === 'stale' ? 'Rebuild Local Search Index' : 'Build Local Search Index'
+  const searchArea = searchReady
+    ? `
+      <form class="search-bar" id="archive-search-form" role="search">
+        <input id="archive-search" class="search-input" type="search" value="${escapeHtml(searchQuery)}" placeholder="Search conversations, prompts, and replies" autocomplete="off" aria-label="Search Archive">
+        <button class="button primary" type="submit">Search</button>
+      </form>
+    `
+    : `
+      <div class="search-bar is-disabled" aria-disabled="true">
+        <input class="search-input" type="search" placeholder="Build the local index to search conversations" disabled>
+        <button class="button primary" type="button" disabled>Search</button>
+      </div>
+    `
+
+  const resultsHtml = searchReady && searchQuery
+    ? `<section class="search-results" aria-live="polite">
+        <div class="section-heading"><h2>${searchResults.length} ${searchResults.length === 1 ? 'result' : 'results'}</h2><span>for “${escapeHtml(searchQuery)}”</span></div>
+        <div class="conversation-list">${searchResults.map(result => renderResultRow(result, searchQuery)).join('') || '<p class="empty-state">No conversations matched this search.</p>'}</div>
+      </section>`
+    : ''
+
+  let indexTitle = 'Not built on this device'
+  let indexText = 'Archive can build a disposable full-text index locally from the canonical Dropbox conversation archive.'
+  if (searchStatus.state === 'current') {
+    indexTitle = `${escapeHtml(searchStatus.indexedCount)} conversations indexed`
+    indexText = `Search stays on this device${searchStatus.builtAt ? ` · built ${formatDateValue(searchStatus.builtAt)}` : ''}.`
+  } else if (searchStatus.state === 'stale') {
+    indexTitle = 'Local search index needs refresh'
+    indexText = `${escapeHtml(searchStatus.indexedCount)} conversations are indexed, but the Dropbox archive has changed.`
+  }
 
   return `
     <section class="page page-home">
       <header class="page-header">
         <p class="eyebrow">ChatGPT archive dashboard</p>
         <h1>Find what you remember.</h1>
-        <p class="lede">Archive keeps a durable conversation archive in Dropbox and will build the full-text search index locally on your devices.</p>
+        <p class="lede">Archive keeps a durable conversation archive in Dropbox and searches it locally on this device.</p>
       </header>
 
-      <div class="search-placeholder" aria-disabled="true">
-        <span>Search arrives in the next build after the conversation archive is populated</span>
-      </div>
+      ${searchArea}
+      <div id="search-index-progress-anchor"></div>
+      ${resultsHtml}
 
       <div class="home-grid">
         <article class="panel">
           <p class="panel-kicker">Archive status</p>
           <h2>${activityTitle}</h2>
           <p>${activityDetail}</p>
-          <a class="button primary" href="#/import">Import ChatGPT Export</a>
+          ${sourceDetails}
+          <div class="button-row">
+            <a class="button secondary" href="#/conversations">Browse Conversations</a>
+            <a class="button quiet" href="#/import">Import ChatGPT Export</a>
+          </div>
         </article>
         <article class="panel">
-          <p class="panel-kicker">Dropbox</p>
-          <h2>${dropboxConnected ? 'Connected' : 'Not connected'}</h2>
-          <p>${dropboxConnected ? 'Conversation archive is stored in Dropbox; the search index remains local.' : 'Connect Dropbox before committing the first archive import.'}</p>
-          <a class="button secondary" href="#/settings">${dropboxConnected ? 'Dropbox Settings' : 'Connect Dropbox'}</a>
+          <p class="panel-kicker">Local search</p>
+          <h2>${indexTitle}</h2>
+          <p>${indexText}</p>
+          ${searchStatus.state === 'current'
+            ? '<button class="button secondary" id="rebuild-search-index" type="button">Rebuild Local Search Index</button>'
+            : `<button class="button primary" id="build-search-index" type="button" ${dropboxConnected && conversationCount > 0 ? '' : 'disabled'}>${indexAction}</button>`}
+          ${!dropboxConnected && searchStatus.state !== 'current' ? '<p class="muted small-copy">Connect Dropbox to build the local index.</p>' : ''}
         </article>
       </div>
     </section>
@@ -132,7 +240,7 @@ export function renderImportPreview({ parsedExport, preview, dropboxConnected, i
     ? 'This export contains a direct project_id field on at least one conversation.'
     : 'Project membership is not directly exposed by the observed export schema, so Archive will not invent Project assignments.'
   const resultHtml = importResult
-    ? `<div class="notice success"><strong>Import committed.</strong> ${escapeHtml(importResult.uploadedConversationCount)} new/updated conversation versions were saved and the archive index was committed.</div>`
+    ? `<div class="notice success"><strong>Import committed.</strong> ${escapeHtml(importResult.skippedExistingConversationCount ?? 0)} reused · ${escapeHtml(importResult.uploadedConversationCount ?? 0)} uploaded · ${escapeHtml(preview.total)} total committed.</div>`
     : ''
 
   return `
@@ -157,7 +265,7 @@ export function renderImportPreview({ parsedExport, preview, dropboxConnected, i
       <div class="panel preview-details">
         <h3>What Archive found</h3>
         <ul class="detail-list">
-          <li><span>Conversation files</span><strong>${escapeHtml(parsedExport.stats.shardCount)}</strong></li>
+          <li><span>Source conversation JSON files</span><strong>${escapeHtml(parsedExport.stats.shardCount)}</strong></li>
           <li><span>Attachment metadata records</span><strong>${escapeHtml(parsedExport.stats.attachmentMetadataCount)}</strong></li>
           <li><span>Linked to a conversation</span><strong>${escapeHtml(parsedExport.stats.linkedAttachmentCount)}</strong></li>
           <li><span>Parser warnings</span><strong>${escapeHtml(parsedExport.warnings?.length ?? 0)}</strong></li>
@@ -168,7 +276,7 @@ export function renderImportPreview({ parsedExport, preview, dropboxConnected, i
       ${anomaly ? `<div class="notice error"><strong>Import warning.</strong> ${escapeHtml(anomaly)}<label class="confirm-row"><input id="confirm-anomaly" type="checkbox"> I reviewed this warning and want to commit the export without deleting the missing conversations.</label></div>` : ''}
 
       <div class="notice">
-        <strong>v0.2.3 scope.</strong>
+        <strong>v0.2.4 scope.</strong>
         Conversation source JSON, readable Markdown, and attachment metadata are imported now. Binary attachments and latest/previous source-ZIP retention come in the next v0.2.x step.
       </div>
 
@@ -176,6 +284,74 @@ export function renderImportPreview({ parsedExport, preview, dropboxConnected, i
         <button class="button primary" id="import-to-dropbox" type="button" ${dropboxConnected && !anomaly ? '' : 'disabled'}>Import Conversations to Dropbox</button>
         ${dropboxConnected ? '' : '<a class="button secondary" href="#/settings">Connect Dropbox</a>'}
       </div>
+    </section>
+  `
+}
+
+
+export function renderConversationListPage({ documents = [], searchStatus = null }) {
+  const sorted = [...documents].sort((a, b) => Number(b.updateTime ?? 0) - Number(a.updateTime ?? 0) || String(a.title).localeCompare(String(b.title)))
+  const list = sorted.map(document => {
+    const labels = resultMeta(document)
+    return `
+      <article class="conversation-row">
+        <a class="conversation-row-link" href="${encodeConversationHref(document.conversationId)}">
+          <div class="conversation-row-main">
+            <h3>${escapeHtml(document.title || 'Untitled conversation')}</h3>
+            <p class="conversation-date">Updated ${formatDateValue(document.updateTime)} · ${escapeHtml(document.messages?.length ?? 0)} visible messages</p>
+            ${labels.length ? `<div class="row-badges">${labels.map(label => `<span>${escapeHtml(label)}</span>`).join('')}</div>` : ''}
+          </div>
+        </a>
+      </article>
+    `
+  }).join('')
+
+  const notReady = searchStatus && searchStatus.state !== 'current'
+  return `
+    <section class="page page-conversations">
+      <header class="page-header compact">
+        <p class="eyebrow">Library</p>
+        <h1>All Conversations</h1>
+        <p class="lede">${escapeHtml(sorted.length)} conversations indexed locally on this device.</p>
+      </header>
+      ${notReady ? '<div class="notice"><strong>Local index is not current.</strong> Build or rebuild it from Home before relying on this list.</div>' : ''}
+      <div class="conversation-list">${list || '<p class="empty-state">No local conversation index yet. Return Home and build the local search index.</p>'}</div>
+    </section>
+  `
+}
+
+export function renderConversationPage({ document, query = '', messageId = '' }) {
+  if (!document) {
+    return `
+      <section class="page page-conversation">
+        <header class="page-header compact"><p class="eyebrow">Conversation</p><h1>Conversation unavailable</h1></header>
+        <div class="notice">This conversation is not in the local index on this device. <a href="#/">Build or rebuild the local search index</a>.</div>
+      </section>
+    `
+  }
+
+  const messages = (document.messages ?? []).map(message => {
+    const hit = messageId && message.messageId === messageId
+    const text = escapeHtml(message.text).replaceAll('\n', '<br>')
+    return `
+      <article class="transcript-message ${message.role === 'user' ? 'from-user' : 'from-assistant'}${hit ? ' is-search-hit' : ''}" id="message-${escapeHtml(message.messageId)}">
+        <div class="message-meta">
+          <strong>${message.role === 'user' ? 'You' : 'ChatGPT'}</strong>
+          ${message.createTime ? `<span>${formatDateValue(message.createTime, { includeTime: true })}</span>` : ''}
+        </div>
+        <div class="message-text">${text}</div>
+      </article>
+    `
+  }).join('')
+
+  return `
+    <section class="page page-conversation">
+      <header class="page-header compact conversation-header">
+        <p class="eyebrow"><a href="#/conversations">All Conversations</a> / Archived transcript</p>
+        <h1>${escapeHtml(document.title || 'Untitled conversation')}</h1>
+        <p class="lede">Updated ${formatDateValue(document.updateTime)} · ${escapeHtml(document.messages?.length ?? 0)} visible messages${query ? ` · opened from search “${escapeHtml(query)}”` : ''}</p>
+      </header>
+      <div class="transcript">${messages || '<p class="empty-state">No visible user/assistant text was found on the active branch.</p>'}</div>
     </section>
   `
 }

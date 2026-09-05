@@ -5,11 +5,14 @@ import { commitParsedExport } from './import/importService.js'
 import { DropboxSession } from './dropbox/session.js'
 import { DropboxArchiveRepository } from './dropbox/archiveRepository.js'
 import { getCapabilityReport, runIndexedDbSelfTest } from './features/selfCheck.js'
+import { buildLocalSearchIndex, getLocalSearchStatus } from './search/indexService.js'
+import { searchDocuments } from './search/searchIndex.js'
 import {
   makeImportId,
   progressFromCommitEvent,
   progressFromParseEvent,
-  routeFromHash,
+  progressFromSearchIndexEvent,
+  parseAppRoute,
   tokenIsUsable,
 } from './appLogic.js'
 import {
@@ -19,9 +22,11 @@ import {
   renderImportPage,
   renderImportPreview,
   renderSettingsPage,
+  renderConversationListPage,
+  renderConversationPage,
 } from './ui.js'
 
-const VERSION = '0.2.3'
+const VERSION = '0.2.4'
 const root = document.getElementById('app')
 
 const state = {
@@ -32,6 +37,7 @@ const state = {
   importResult: null,
   indexedDbWriteOk: null,
   settingsMessage: null,
+  searchQuery: '',
 }
 
 let db
@@ -64,10 +70,13 @@ async function latestImportActivity() {
     .sort((a, b) => String(b.importedAt ?? b.inspectedAt ?? '').localeCompare(String(a.importedAt ?? a.inspectedAt ?? '')))[0] ?? null
 }
 
-async function localArchiveIndex() {
+async function localArchiveIndex(lastImport = null) {
   const rows = await db.getAll('archiveIndex')
   return {
     archiveIndexVersion: 1,
+    updatedAt: lastImport?.importedAt ?? null,
+    lastImportId: lastImport?.id ?? null,
+    sourceExportName: lastImport?.sourceFileName ?? null,
     conversations: Object.fromEntries(rows.map(row => [row.conversationId, row])),
   }
 }
@@ -81,6 +90,32 @@ function updateImportProgress(progress) {
     card.setAttribute('role', 'status')
     const results = document.getElementById('import-results')
     results?.parentNode?.insertBefore(card, results)
+  }
+
+  card.replaceChildren()
+  const strong = document.createElement('strong')
+  strong.textContent = progress.label
+  const detail = document.createElement('span')
+  detail.textContent = progress.detail ?? ''
+  card.append(strong, detail)
+
+  if (progress.percent != null) {
+    const bar = document.createElement('progress')
+    bar.max = 100
+    bar.value = progress.percent
+    card.append(bar)
+  }
+}
+
+function updateSearchProgress(progress) {
+  let card = document.getElementById('live-search-progress')
+  if (!card) {
+    card = document.createElement('div')
+    card.id = 'live-search-progress'
+    card.className = 'progress-card search-progress-card'
+    card.setAttribute('role', 'status')
+    const anchor = document.getElementById('search-index-progress-anchor')
+    anchor?.insertAdjacentElement('afterend', card)
   }
 
   card.replaceChildren()
@@ -246,6 +281,53 @@ function attachImportHandlers(dropboxConnected) {
   attachPreviewHandlers(dropboxConnected)
 }
 
+function attachHomeHandlers({ dropboxConnected, archiveIndex }) {
+  const searchForm = document.getElementById('archive-search-form')
+  const searchInput = document.getElementById('archive-search')
+  searchForm?.addEventListener('submit', event => {
+    event.preventDefault()
+    state.searchQuery = searchInput?.value.trim() ?? ''
+    render().catch(console.error)
+  })
+
+  for (const id of ['build-search-index', 'rebuild-search-index']) {
+    const button = document.getElementById(id)
+    button?.addEventListener('click', async () => {
+      if (!dropboxConnected || !Object.keys(archiveIndex?.conversations ?? {}).length) return
+      button.disabled = true
+      button.textContent = id === 'rebuild-search-index' ? 'Rebuilding…' : 'Building…'
+      document.getElementById('live-search-progress')?.remove()
+
+      try {
+        const repository = await createDropboxRepository()
+        await buildLocalSearchIndex({
+          archiveIndex,
+          repository,
+          db,
+          onProgress(event) {
+            updateSearchProgress(progressFromSearchIndexEvent(event))
+          },
+        })
+        state.searchQuery = ''
+        document.getElementById('live-search-progress')?.remove()
+        await render()
+        showPageNotice('Local search index is ready on this device.')
+      } catch (error) {
+        document.getElementById('live-search-progress')?.remove()
+        await render()
+        showPageNotice(error instanceof Error ? error.message : String(error), true)
+      }
+    })
+  }
+}
+
+function attachConversationHandlers(routeInfo) {
+  if (!routeInfo?.messageId) return
+  requestAnimationFrame(() => {
+    document.getElementById(`message-${routeInfo.messageId}`)?.scrollIntoView({ block: 'center' })
+  })
+}
+
 function attachSettingsHandlers(appKey, dropboxConnected) {
   const input = document.getElementById('dropbox-app-key')
   const saveButton = document.getElementById('save-dropbox-key')
@@ -311,22 +393,24 @@ function attachSettingsHandlers(appKey, dropboxConnected) {
 }
 
 async function render() {
-  const route = routeFromHash(location.hash)
+  const routeInfo = parseAppRoute(location.hash)
   const [appKey, dropboxConnected, lastImport] = await Promise.all([
     getAppKey(),
     isDropboxConnected(),
     latestImportActivity(),
   ])
+  const archiveIndex = await localArchiveIndex(lastImport)
+  const searchStatus = await getLocalSearchStatus({ archiveIndex, db })
 
   let content
-  if (route === 'import') {
+  if (routeInfo.name === 'import') {
     content = renderImportPage({
       dropboxConnected,
       parsedExport: state.parsedExport,
       preview: state.importPreview,
       importResult: state.importResult,
     })
-  } else if (route === 'settings') {
+  } else if (routeInfo.name === 'settings') {
     content = renderSettingsPage({
       capabilities: getCapabilityReport(),
       indexedDbWriteOk: state.indexedDbWriteOk,
@@ -335,14 +419,36 @@ async function render() {
       message: state.settingsMessage,
     })
     state.settingsMessage = null
+  } else if (routeInfo.name === 'conversations') {
+    const documents = await db.getAll('searchDocuments')
+    content = renderConversationListPage({ documents, searchStatus })
+  } else if (routeInfo.name === 'conversation') {
+    const document = await db.get('searchDocuments', routeInfo.conversationId)
+    content = renderConversationPage({
+      document,
+      query: routeInfo.query,
+      messageId: routeInfo.messageId,
+    })
   } else {
-    content = renderHomePage({ lastInspection: lastImport, dropboxConnected })
+    const documents = searchStatus.state === 'current' ? await db.getAll('searchDocuments') : []
+    const searchResults = searchStatus.state === 'current' && state.searchQuery
+      ? searchDocuments(documents, state.searchQuery)
+      : []
+    content = renderHomePage({
+      lastInspection: lastImport,
+      dropboxConnected,
+      searchStatus,
+      searchQuery: state.searchQuery,
+      searchResults,
+    })
   }
 
-  root.innerHTML = renderAppShell({ route, content, version: VERSION })
+  root.innerHTML = renderAppShell({ route: routeInfo.name, content, version: VERSION })
 
-  if (route === 'import') attachImportHandlers(dropboxConnected)
-  if (route === 'settings') attachSettingsHandlers(appKey, dropboxConnected)
+  if (routeInfo.name === 'home') attachHomeHandlers({ dropboxConnected, archiveIndex })
+  if (routeInfo.name === 'import') attachImportHandlers(dropboxConnected)
+  if (routeInfo.name === 'settings') attachSettingsHandlers(appKey, dropboxConnected)
+  if (routeInfo.name === 'conversation') attachConversationHandlers(routeInfo)
 }
 
 async function completeDropboxCallbackIfPresent() {

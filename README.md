@@ -1,80 +1,79 @@
-# Archive — v0.2.3 Resilient Import
+# Archive — v0.2.4 Search & Browse
 
-Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. v0.2.3 makes the real Dropbox importer **resumable and failure-bounded** after the first large-account import exposed a hung Dropbox request.
+Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. The canonical conversation archive lives in Dropbox; the full-text search index is disposable local data that stays on the device.
 
-## What v0.2.3 does
+## What v0.2.4 adds
+
+- Builds a full-text local search index from the committed Dropbox archive.
+- Keeps prompt/reply search data in IndexedDB on the current device; it is not uploaded as a search database.
+- Searches conversation titles, user prompts, and ChatGPT replies.
+- Supports quoted phrases, partial words, and light typo tolerance.
+- Ranks title matches first, then user-message matches, then assistant-message matches.
+- Returns one result per conversation with up to two matching excerpts.
+- Opens the archived transcript and jumps to the matching message when possible.
+- Adds an **All Conversations** library sorted by most recently updated.
+- Shows archived/starred/archive-only state when present in the export/archive index.
+- Simplifies Home to show conversation count and last-import date instead of the giant ZIP filename.
+- Clarifies resumed-import reporting as **reused / uploaded / total committed**.
+- Renames the import diagnostic to **Source conversation JSON files**.
+- Uses Lucide `package-open` as the Archive in-app and installed PWA icon.
+
+## Search privacy model
+
+The Dropbox archive is the durable source of truth. When **Build Local Search Index** is selected, Archive downloads each canonical conversation JSON file from its own Dropbox app folder, extracts the visible active-branch user/assistant text, and writes a disposable search document to local IndexedDB.
+
+The search index:
+
+- stays on the current device
+- can be rebuilt from Dropbox
+- is marked stale when the committed archive changes
+- does not replace or modify the canonical Dropbox archive
+
+If an index build fails, Archive does not mark the partial index current.
+
+## Existing import behavior retained
 
 - Reads the official ChatGPT export ZIP locally in the browser.
 - Handles ZIP64 exports without loading the multi-gigabyte ZIP into memory.
-- Reads the observed 2026 sharded conversation files (`conversations-000.json`, etc.) one at a time.
+- Reads sharded conversation files such as `conversations-000.json` one at a time.
 - Reconstructs the active conversation branch from `current_node` and node `parent` links.
-- Preserves the complete source conversation object as canonical JSON.
-- Generates a readable Markdown copy containing user/assistant-visible text only.
-- Does **not** put internal thought/tool/system/developer structures into the readable transcript.
+- Stores complete source conversation JSON plus readable Markdown in Dropbox.
 - Fingerprints each source conversation with SHA-256.
-- Compares the export with `/System/archive-index.json` in Dropbox and previews:
-  - new conversations
-  - updated conversations
-  - unchanged conversations
-  - conversations not present in the latest export
-- Never deletes a conversation merely because it is absent from a later export.
-- Warns before committing an anomalously large disappearance.
-- Imports file metadata from `library_files.json` and links records back to conversations when the export provides thread/message IDs.
-- Stores changed conversation versions in Dropbox using content-addressed filenames.
-- Writes the archive index **last**, making it the commit point for the import.
-- Mirrors the committed archive index into local IndexedDB as rebuildable derived data.
+- Merges later exports and preserves missing conversations rather than deleting them.
+- Imports attachment metadata and links it to conversations where reliable IDs exist.
+- Resumes partial imports by reusing complete content-addressed JSON/Markdown pairs already in Dropbox.
+- Uses bounded Dropbox concurrency, request timeouts, and transient-error retries.
+- Writes `/System/archive-index.json` last as the import commit point.
 
+## Deliberately not in this build
 
-## Resilient import behavior
-
-Before uploading changed conversations, Archive now inventories the content-addressed JSON and Markdown versions already present in Dropbox. A conversation is skipped only when **both** files exist. This allows an interrupted first import to resume without rewriting hundreds of completed conversations.
-
-Dropbox requests now have a 45-second timeout and retry transient network failures, HTTP 429 responses, and server-side 5xx responses with short backoff delays. If retries are exhausted, the import stops before the authoritative archive index is written and identifies the conversation that failed. Running the import again resumes from the completed content-addressed pairs already in Dropbox.
-
-## v0.2.3 deliberately does not yet
-
-- upload the 3+ GB of binary `.dat` attachment payloads
-- retain `latest.zip` / `previous.zip` in Dropbox
-- build the full-text search interface
-- reconstruct ChatGPT Projects unless the export supplies a verified direct mapping
-
-Those are subsequent v0.2.x / search milestones. The deep inspection showed no direct `project_id` in the observed conversation schema, so Archive does not guess.
+- binary `.dat` attachment payload upload
+- latest/previous source-ZIP retention in Dropbox
+- folders, tags, notes, saved searches, or bulk organization
+- semantic/vector search
+- reconstructed ChatGPT Project membership unless a reliable mapping is available
 
 ## Deploy to GitHub Pages
 
 1. Upload the **contents of this folder** to the root of the `Archive` repository.
-2. In GitHub, open **Settings → Pages**.
-3. Deploy from `main` and `/root`.
-4. Reload the deployed Archive site after GitHub Pages finishes publishing.
+2. Wait for GitHub Pages to finish deploying.
+3. Open Archive and confirm **v0.2.4** in the lower-left corner.
+4. Home should show the committed conversation count.
+5. Select **Build Local Search Index** and leave the tab open for the first build.
+6. When indexing completes, use the Home search box or **All Conversations**.
 
 ## Dropbox setup
 
-Archive needs Dropbox before it can commit an import.
-
-Create a Dropbox API app with:
+Archive uses a Dropbox API app with:
 
 - Scoped access
 - **App Folder** content access
-- file read/write scopes needed by Archive
+- file read/write permissions required by Archive
 - the exact deployed Archive URL registered as an OAuth redirect URI
 
-In Archive → **Settings**, paste the Dropbox **App Key** and choose **Connect Dropbox**.
+In Archive → **Settings**, save the Dropbox **App Key** and connect with OAuth PKCE. Do not put a Dropbox App Secret in the PWA.
 
-The App Key is public OAuth client configuration. Do not put a Dropbox App Secret in Archive. The browser uses PKCE and stores only a short-lived Dropbox access token.
-
-## First real import
-
-1. Open **Import**.
-2. Choose the official ChatGPT export ZIP.
-3. Select **Analyze Export**.
-4. Wait while Archive reads the conversation shards and file metadata locally.
-5. Review the import preview.
-6. If Dropbox is connected, select **Import Conversations to Dropbox**.
-7. Leave the tab open until Archive reports that the index was committed.
-
-For the first import, every conversation will be **new**. On later exports, Archive will upload only new or changed conversation versions.
-
-## Dropbox layout in this build
+## Dropbox layout
 
 ```text
 Archive/
@@ -86,10 +85,18 @@ Archive/
     └── index.json
 
 System/
-└── archive-index.json
+├── archive-index.json
+└── imports.json
 ```
 
-The filenames are content-addressed so existing committed versions are not overwritten before the new archive index is successfully written.
+## Local IndexedDB
+
+The v0.2.4 database schema includes disposable stores for:
+
+- `searchDocuments`
+- `searchMeta`
+
+The database is upgraded to schema version 3 without intentionally deleting the existing Archive settings, import history, or local archive-index mirror.
 
 ## Tests
 
@@ -99,9 +106,8 @@ No npm packages are required.
 npm test
 ```
 
-The core parser, ZIP64 reader, active-branch reconstruction, privacy filtering, merge logic, Dropbox repository, PKCE flow, and UI rendering are covered with Node's built-in test runner.
-
+The suite covers ZIP parsing, active-branch reconstruction, import merge/commit safety, Dropbox PKCE/repository behavior, resilient import, local search indexing, ranking/query behavior, browse/transcript rendering, service-worker update safety, and PWA metadata.
 
 ## Cache recovery
 
-If a previous service worker serves an older Archive build after the local database has already upgraded, visit `reset.html` once. It unregisters Archive service workers and clears only `archive-shell-*` caches; it does not delete IndexedDB or Dropbox settings.
+If an old service worker ever serves stale Archive code after a local database upgrade, visit `reset.html` once. It unregisters Archive service workers and clears only Archive application-shell caches; it does not delete IndexedDB or Dropbox settings.

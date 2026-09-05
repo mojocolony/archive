@@ -251,3 +251,22 @@ test('detects only conversation versions whose JSON and Markdown are both alread
   assert.deepEqual([...versions], ['c1--f1'])
   assert.equal(calls.length, 2)
 })
+
+test('getConversationSource downloads arbitrary archived conversation JSON by canonical path', async () => {
+  const fakeFetch = async (url, options) => {
+    assert.equal(url, 'https://content.dropboxapi.com/2/files/download')
+    assert.deepEqual(JSON.parse(options.headers['Dropbox-API-Arg']), {
+      path: '/Archive/Conversations/c1--fp.json',
+    })
+    return new Response(JSON.stringify({ conversation_id: 'c1', title: 'Camera' }), { status: 200 })
+  }
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'token',
+    fetchImpl: fakeFetch,
+  })
+
+  assert.deepEqual(await repo.getConversationSource('/Archive/Conversations/c1--fp.json'), {
+    conversation_id: 'c1',
+    title: 'Camera',
+  })
+})

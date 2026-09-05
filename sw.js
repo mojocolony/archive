@@ -1,4 +1,4 @@
-const CACHE_NAME = 'archive-shell-v0.2.3'
+const CACHE_NAME = 'archive-shell-v0.2.4'
 const NETWORK_FIRST_DESTINATIONS = new Set(['document', 'script', 'style'])
 const APP_SHELL = [
   './',
@@ -23,7 +23,11 @@ const APP_SHELL = [
   './src/dropbox/auth.js',
   './src/dropbox/session.js',
   './src/dropbox/archiveRepository.js',
+  './src/search/searchIndex.js',
+  './src/search/indexService.js',
   './public/manifest.webmanifest',
+  './public/icons/package-open.svg',
+  './public/icons/archive-180.png',
   './public/icons/archive-192.png',
   './public/icons/archive-512.png',
 ]

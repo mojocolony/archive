@@ -27,7 +27,7 @@ test('search, browse, and transcript views have responsive presentation styles',
   assert.match(css, /\.is-search-hit/)
 })
 
-test('v0.3.0 ships organization metadata support and the package-open install metadata', async () => {
+test('v0.3.1 ships instant organization saves and the package-open install metadata', async () => {
   const [manifestText, indexHtml, svg, packageText, appSource, worker] = await Promise.all([
     readFile('public/manifest.webmanifest', 'utf8'),
     readFile('index.html', 'utf8'),
@@ -38,12 +38,12 @@ test('v0.3.0 ships organization metadata support and the package-open install me
   ])
   const manifest = JSON.parse(manifestText)
   const pkg = JSON.parse(packageText)
-  assert.equal(pkg.version, '0.3.0')
-  assert.match(appSource, /const VERSION = '0\.3\.0'/)
+  assert.equal(pkg.version, '0.3.1')
+  assert.match(appSource, /const VERSION = '0\.3\.1'/)
   assert.match(svg, /lucide-package-open/)
   assert.match(indexHtml, /apple-touch-icon/)
   assert.equal(manifest.icons.some(icon => icon.src.includes('archive-512.png')), true)
-  assert.match(worker, /archive-shell-v0\.3\.0/)
+  assert.match(worker, /archive-shell-v0\.3\.1/)
   assert.match(worker, /src\/search\/indexService\.js/)
   assert.match(worker, /src\/search\/searchIndex\.js/)
   assert.match(worker, /src\/organization\/metadataService\.js/)

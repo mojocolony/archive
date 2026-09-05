@@ -35,3 +35,9 @@ test('recovery page exists to clear stale service-worker caches without touching
   assert.match(js, /caches\.keys\(\)/)
   assert.equal(js.includes('indexedDB.deleteDatabase'), false)
 })
+
+test('organization handlers observe background Dropbox sync failures after optimistic local updates', async () => {
+  const source = await readFile('src/app.js', 'utf8')
+  assert.match(source, /syncPromise/)
+  assert.match(source, /Saved locally, but Dropbox sync failed:/)
+})

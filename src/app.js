@@ -28,7 +28,7 @@ import {
   renderTagsPage,
 } from './ui.js'
 
-const VERSION = '0.3.0'
+const VERSION = '0.3.1'
 const root = document.getElementById('app')
 
 const state = {
@@ -303,6 +303,17 @@ async function updateOrganization(conversationId, patch) {
   return updateConversationOrganization({ conversationId, patch, repository, db })
 }
 
+async function finishOptimisticOrganizationUpdate(result) {
+  const syncOutcome = result.syncPromise.then(
+    () => null,
+    error => error instanceof Error ? error : new Error(String(error)),
+  )
+  await render()
+  syncOutcome.then(error => {
+    if (error) showPageNotice(`Saved locally, but Dropbox sync failed: ${error.message}`, true)
+  })
+}
+
 function attachOrganizationHandlers() {
   for (const button of document.querySelectorAll('[data-star-conversation]')) {
     button.addEventListener('click', async event => {
@@ -310,8 +321,8 @@ function attachOrganizationHandlers() {
       event.stopPropagation()
       button.disabled = true
       try {
-        await updateOrganization(button.dataset.starConversation, { starred: button.dataset.starred !== 'true' })
-        await render()
+        const result = await updateOrganization(button.dataset.starConversation, { starred: button.dataset.starred !== 'true' })
+        await finishOptimisticOrganizationUpdate(result)
       } catch (error) {
         button.disabled = false
         showPageNotice(error instanceof Error ? error.message : String(error), true)
@@ -329,8 +340,8 @@ function attachOrganizationHandlers() {
     if (route.name !== 'conversation') return
     const current = await db.get('metadata', route.conversationId)
     try {
-      await updateOrganization(route.conversationId, { tags: normalizeTags([...(current?.tags ?? []), tag]) })
-      await render()
+      const result = await updateOrganization(route.conversationId, { tags: normalizeTags([...(current?.tags ?? []), tag]) })
+      await finishOptimisticOrganizationUpdate(result)
     } catch (error) {
       showPageNotice(error instanceof Error ? error.message : String(error), true)
     }
@@ -345,8 +356,8 @@ function attachOrganizationHandlers() {
       const tags = (current?.tags ?? []).filter(tag => tag.toLocaleLowerCase() !== removeKey)
       button.disabled = true
       try {
-        await updateOrganization(route.conversationId, { tags })
-        await render()
+        const result = await updateOrganization(route.conversationId, { tags })
+        await finishOptimisticOrganizationUpdate(result)
       } catch (error) {
         button.disabled = false
         showPageNotice(error instanceof Error ? error.message : String(error), true)

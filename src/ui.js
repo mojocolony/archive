@@ -298,7 +298,7 @@ export function renderImportPreview({ parsedExport, preview, dropboxConnected, i
       ${anomaly ? `<div class="notice error"><strong>Import warning.</strong> ${escapeHtml(anomaly)}<label class="confirm-row"><input id="confirm-anomaly" type="checkbox"> I reviewed this warning and want to commit the export without deleting the missing conversations.</label></div>` : ''}
 
       <div class="notice">
-        <strong>v0.3.0 scope.</strong>
+        <strong>v0.3.1 scope.</strong>
         Conversation source JSON, readable Markdown, and attachment metadata are imported now. Binary attachments and latest/previous source-ZIP retention come in the next v0.2.x step.
       </div>
 

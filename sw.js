@@ -1,4 +1,4 @@
-const CACHE_NAME = 'archive-shell-v0.3.0'
+const CACHE_NAME = 'archive-shell-v0.3.1'
 const NETWORK_FIRST_DESTINATIONS = new Set(['document', 'script', 'style'])
 const APP_SHELL = [
   './',

@@ -42,6 +42,14 @@ export async function loadOrganizationMetadata({ repository, db }) {
   return index
 }
 
+let organizationSyncTail = Promise.resolve()
+
+function enqueueOrganizationSync(task) {
+  const syncPromise = organizationSyncTail.then(task, task)
+  organizationSyncTail = syncPromise.catch(() => undefined)
+  return syncPromise
+}
+
 export async function updateConversationOrganization({
   conversationId,
   patch,
@@ -50,8 +58,8 @@ export async function updateConversationOrganization({
   now = () => new Date().toISOString(),
 }) {
   if (!conversationId) throw new Error('Conversation ID is required')
-  const index = await repository.getConversationMetadataIndex()
-  const current = normalizeRow(conversationId, index.conversations?.[conversationId] ?? {})
+  const localCurrent = await db.get('metadata', conversationId)
+  const current = normalizeRow(conversationId, localCurrent ?? {})
   const updatedAt = now()
   const next = normalizeRow(conversationId, {
     ...current,
@@ -59,16 +67,7 @@ export async function updateConversationOrganization({
     tags: patch?.tags === undefined ? current.tags : patch.tags,
     updatedAt,
   })
-  const nextIndex = {
-    metadataVersion: 1,
-    updatedAt,
-    conversations: {
-      ...(index.conversations ?? {}),
-      [conversationId]: next,
-    },
-  }
 
-  await repository.saveConversationMetadataIndex(nextIndex)
   await db.put('metadata', next)
 
   const document = await db.get('searchDocuments', conversationId)
@@ -80,5 +79,19 @@ export async function updateConversationOrganization({
     })
   }
 
-  return next
+  const syncPromise = enqueueOrganizationSync(async () => {
+    const index = await repository.getConversationMetadataIndex()
+    const nextIndex = {
+      metadataVersion: 1,
+      updatedAt,
+      conversations: {
+        ...(index.conversations ?? {}),
+        [conversationId]: next,
+      },
+    }
+    await repository.saveConversationMetadataIndex(nextIndex)
+    return next
+  })
+
+  return { ...next, row: next, syncPromise }
 }

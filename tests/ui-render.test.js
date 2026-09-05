@@ -10,6 +10,7 @@ import {
   renderSettingsPage,
   renderConversationListPage,
   renderConversationPage,
+  renderTagsPage,
 } from '../src/ui.js'
 
 test('formatBytes produces compact human-readable sizes', () => {
@@ -187,4 +188,43 @@ test('app shell uses the Lucide package-open mark instead of a letter tile', () 
   const html = renderAppShell({ route: 'home', content: '<p>Body</p>', version: '0.2.4' })
   assert.match(html, /lucide-package-open/)
   assert.doesNotMatch(html, /brand-mark[^>]*>A</)
+})
+
+test('organization navigation includes Starred and Tags views', () => {
+  const html = renderAppShell({ route: 'starred', content: '<p>Body</p>', version: '0.3.0' })
+  assert.match(html, /href="#\/starred"/)
+  assert.match(html, /href="#\/tags"/)
+})
+
+test('conversation page provides Archive star, tag controls, and a new-tab ChatGPT source link', () => {
+  const html = renderConversationPage({ document: {
+    conversationId: 'abc-123', title: 'Podstream', updateTime: 20, starred: true, tags: ['Apps', 'Audio'], messages: [],
+  } })
+  assert.match(html, /data-star-conversation="abc-123"/)
+  assert.match(html, /Apps/)
+  assert.match(html, /Audio/)
+  assert.match(html, /id="add-tag-form"/)
+  assert.match(html, /https:\/\/chatgpt\.com\/c\/abc-123/)
+  assert.match(html, /target="_blank"/)
+  assert.match(html, /rel="noopener noreferrer"/)
+})
+
+test('tags page groups Archive tags with counts and links to filtered tag views', () => {
+  const html = renderTagsPage({ documents: [
+    { conversationId: 'c1', tags: ['Apps', 'Audio'] },
+    { conversationId: 'c2', tags: ['Apps'] },
+  ] })
+  assert.match(html, /Apps/)
+  assert.match(html, /2 conversations/)
+  assert.match(html, /#\/tags\/Apps/)
+  assert.match(html, /Audio/)
+})
+
+test('conversation rows expose a star action without hiding the conversation link', () => {
+  const html = renderConversationListPage({ documents: [
+    { conversationId: 'c1', title: 'One', updateTime: 10, starred: false, tags: ['Apps'], messages: [] },
+  ] })
+  assert.match(html, /href="#\/conversation\/c1"/)
+  assert.match(html, /data-star-conversation="c1"/)
+  assert.match(html, /Apps/)
 })

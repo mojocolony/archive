@@ -78,9 +78,11 @@ function scoreField(text, query, weight, { allowFuzzy = true } = {}) {
 function unitMatchesDocument(document, unit, kind, { allowFuzzy = true } = {}) {
   if (kind === 'phrase') {
     if (textMatchesPhrase(document.title, unit)) return true
+    if ((document.tags ?? []).some(tag => textMatchesPhrase(tag, unit))) return true
     return document.messages.some(message => textMatchesPhrase(message.text, unit))
   }
   if (textMatchesTerm(document.title, unit, { allowFuzzy })) return true
+  if ((document.tags ?? []).some(tag => textMatchesTerm(tag, unit, { allowFuzzy }))) return true
   return document.messages.some(message => textMatchesTerm(message.text, unit, { allowFuzzy }))
 }
 
@@ -102,7 +104,7 @@ function matchingExcerpts(document, query, { allowFuzzy = true } = {}) {
     .map(({ score: _score, ...message }) => message)
 }
 
-export function buildSearchDocument(indexEntry, source) {
+export function buildSearchDocument(indexEntry, source, metadata = null) {
   const title = String(indexEntry?.title ?? source?.title ?? 'Untitled conversation').trim() || 'Untitled conversation'
   const messages = visibleMessages(source).map(message => ({
     messageId: message.id,
@@ -111,7 +113,9 @@ export function buildSearchDocument(indexEntry, source) {
     text: message.text,
     createTime: message.createTime,
   }))
-  const searchableText = [title, ...messages.map(message => message.text)].join('\n')
+  const tags = Array.isArray(metadata?.tags) ? metadata.tags : []
+  const starred = Boolean(metadata?.starred)
+  const searchableText = [title, ...tags, ...messages.map(message => message.text)].join('\n')
 
   return {
     conversationId: String(indexEntry?.conversationId ?? source?.conversation_id ?? source?.id ?? ''),
@@ -120,6 +124,8 @@ export function buildSearchDocument(indexEntry, source) {
     updateTime: indexEntry?.updateTime ?? source?.update_time ?? null,
     isArchived: Boolean(indexEntry?.isArchived),
     isStarred: Boolean(indexEntry?.isStarred),
+    starred,
+    tags,
     pinnedTime: indexEntry?.pinnedTime ?? null,
     presentInLatestExport: indexEntry?.presentInLatestExport !== false,
     sourcePath: indexEntry?.sourcePath ?? null,
@@ -154,6 +160,7 @@ export function searchDocuments(documents, value, { limit = 100 } = {}) {
       if (!allPhrasesMatch || !allTermsMatch) continue
 
       let score = scoreField(document.title, query, 100, { allowFuzzy })
+      for (const tag of document.tags ?? []) score += scoreField(tag, query, 70, { allowFuzzy })
       for (const message of document.messages) {
         score += scoreField(message.text, query, message.role === 'user' ? 30 : 20, { allowFuzzy })
       }
@@ -165,6 +172,8 @@ export function searchDocuments(documents, value, { limit = 100 } = {}) {
         updateTime: document.updateTime,
         isArchived: document.isArchived,
         isStarred: document.isStarred,
+        starred: Boolean(document.starred),
+        tags: document.tags ?? [],
         presentInLatestExport: document.presentInLatestExport,
         score,
         excerpts: matchingExcerpts(document, query, { allowFuzzy }),

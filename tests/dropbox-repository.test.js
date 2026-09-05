@@ -270,3 +270,21 @@ test('getConversationSource downloads arbitrary archived conversation JSON by ca
     title: 'Camera',
   })
 })
+
+test('conversation organization metadata has a dedicated Dropbox canonical file', async () => {
+  const calls = []
+  const fakeFetch = async (url, options) => {
+    calls.push({ url, options })
+    if (url.includes('/files/download')) {
+      return new Response(JSON.stringify({ error_summary: 'path/not_found/..' }), { status: 409 })
+    }
+    return new Response('{}', { status: 200 })
+  }
+  const repo = new DropboxArchiveRepository({ getAccessToken: async () => 'token', fetchImpl: fakeFetch })
+
+  assert.deepEqual(await repo.getConversationMetadataIndex(), { metadataVersion: 1, updatedAt: null, conversations: {} })
+  await repo.saveConversationMetadataIndex({ metadataVersion: 1, updatedAt: 'now', conversations: { c1: { conversationId: 'c1' } } })
+
+  const upload = calls.find(call => call.url.includes('/files/upload'))
+  assert.equal(JSON.parse(upload.options.headers['Dropbox-API-Arg']).path, '/System/conversation-metadata.json')
+})

@@ -223,6 +223,16 @@ export class DropboxArchiveRepository {
     return index ?? { archiveIndexVersion: 1, conversations: {} }
   }
 
+  async getConversationMetadataIndex() {
+    const index = await this.downloadJson('/System/conversation-metadata.json', { allowNotFound: true })
+    return index ?? { metadataVersion: 1, updatedAt: null, conversations: {} }
+  }
+
+  async saveConversationMetadataIndex(index) {
+    await this.ensureFolder('/System')
+    await this.uploadJson('/System/conversation-metadata.json', index)
+  }
+
   async getConversationSource(path) {
     if (!path) throw new Error('Conversation source path is required')
     return this.downloadJson(path)

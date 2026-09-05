@@ -140,3 +140,16 @@ test('searchDocuments still uses fuzzy matching as a fallback for a likely typo'
 
   assert.deepEqual(searchDocuments([document], 'Podstreem').map(result => result.conversationId), ['podstream'])
 })
+
+test('Archive tags are searchable and dashboard stars remain separate from imported ChatGPT stars', () => {
+  const document = buildSearchDocument(
+    indexEntry({ isStarred: true }),
+    sourceConversation({ title: 'Audio app', user: 'Playback notes', assistant: 'Okay.' }),
+    { conversationId: 'c1', starred: false, tags: ['Podcasts', 'Priya'] },
+  )
+
+  assert.equal(document.isStarred, true)
+  assert.equal(document.starred, false)
+  assert.deepEqual(document.tags, ['Podcasts', 'Priya'])
+  assert.equal(searchDocuments([document], 'Priya').length, 1)
+})

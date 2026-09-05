@@ -1,41 +1,46 @@
-# Archive — v0.2.6 Search Precision Fix
+# Archive — v0.3.0 Organization & Source Links
 
-Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. The canonical conversation archive lives in Dropbox; the full-text search index is disposable local data that stays on the device.
+Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. The canonical conversation archive and Archive-owned organization metadata live in Dropbox; the full-text search index remains disposable local data on each device.
 
-## What v0.2.6 changes
+## What v0.3.0 adds
 
-- Search precision fix: Archive now returns strict exact/partial matches first and uses fuzzy typo matching only when no strict results exist.
-- A search for `Podstream` therefore returns conversations that actually contain `Podstream` (or a longer word containing it), rather than adding merely similar words.
-- Typo tolerance remains available as a fallback, so `Podstreem` can still find `Podstream` when there are no strict matches.
-- Partial-word search remains one-way, so queries such as `architec` still match `architecture`.
-- The existing local search index does not need to be rebuilt for this change.
+- **Archive stars** on search results, conversation lists, and transcript pages.
+- A **Starred** sidebar view containing conversations starred inside Archive.
+- Multiple **tags** per conversation, with add/remove controls on the transcript page.
+- A **Tags** sidebar directory with conversation counts and filtered tag views.
+- Tag text participates in local Archive search.
+- Stars and tags are stored separately from the imported ChatGPT conversation record, so later ChatGPT exports cannot overwrite them.
+- Archive organization metadata syncs through `/System/conversation-metadata.json` in the Dropbox app folder.
+- **Open in ChatGPT** opens the original private conversation URL in a new browser tab using the exported conversation ID. If the source chat no longer exists or ChatGPT changes its private URL format, the archived copy remains available.
+- Imported ChatGPT star state remains distinguishable as **ChatGPT Starred**; it is not the same as an Archive star.
 
-- Builds a full-text local search index from the committed Dropbox archive.
-- Keeps prompt/reply search data in IndexedDB on the current device; it is not uploaded as a search database.
-- Searches conversation titles, user prompts, and ChatGPT replies.
-- Supports quoted phrases, partial words, and light typo tolerance.
-- Ranks title matches first, then user-message matches, then assistant-message matches.
-- Returns one result per conversation with up to two matching excerpts.
-- Opens the archived transcript and jumps to the matching message when possible.
-- Adds an **All Conversations** library sorted by most recently updated.
-- Shows archived/starred/archive-only state when present in the export/archive index.
-- Simplifies Home to show conversation count and last-import date instead of the giant ZIP filename.
-- Clarifies resumed-import reporting as **reused / uploaded / total committed**.
-- Renames the import diagnostic to **Source conversation JSON files**.
-- Uses Lucide `package-open` as the Archive in-app and installed PWA icon.
+## Search behavior retained
 
-## Search privacy model
+- Full-text local search across conversation titles, user prompts, and ChatGPT replies.
+- Exact and one-way partial matches are preferred.
+- Fuzzy typo matching is used only when no strict results exist.
+- Quoted phrases are supported.
+- One result is returned per conversation with matching excerpts.
+- Search stays in local IndexedDB and is not uploaded as a search database.
 
-The Dropbox archive is the durable source of truth. When **Build Local Search Index** is selected, Archive downloads each canonical conversation JSON file from its own Dropbox app folder, extracts the visible active-branch user/assistant text, and writes a disposable search document to local IndexedDB.
+## Dropbox layout
 
-The search index:
+```text
+Archive/
+├── Conversations/
+│   └── <conversation-id>--<sha256>.json
+├── Markdown/
+│   └── <conversation-id>--<sha256>.md
+└── Attachments/
+    └── index.json
 
-- stays on the current device
-- can be rebuilt from Dropbox
-- is marked stale when the committed archive changes
-- does not replace or modify the canonical Dropbox archive
+System/
+├── archive-index.json
+├── conversation-metadata.json
+└── imports.json
+```
 
-If an index build fails, Archive does not mark the partial index current.
+`conversation-metadata.json` is Archive-owned data. The original imported conversation JSON remains unchanged.
 
 ## Existing import behavior retained
 
@@ -51,58 +56,25 @@ If an index build fails, Archive does not mark the partial index current.
 - Uses bounded Dropbox concurrency, request timeouts, and transient-error retries.
 - Writes `/System/archive-index.json` last as the import commit point.
 
-## Deliberately not in this build
-
-- binary `.dat` attachment payload upload
-- latest/previous source-ZIP retention in Dropbox
-- folders, tags, notes, saved searches, or bulk organization
-- semantic/vector search
-- reconstructed ChatGPT Project membership unless a reliable mapping is available
-
 ## Deploy to GitHub Pages
 
 1. Upload the **contents of this folder** to the root of the `Archive` repository.
 2. Wait for GitHub Pages to finish deploying.
-3. Open Archive and confirm **v0.2.6** in the lower-left corner.
-4. Home should show the committed conversation count.
-5. Select **Build Local Search Index** and leave the tab open for the first build.
-6. When indexing completes, use the Home search box or **All Conversations**.
+3. Open Archive and confirm **v0.3.0** in the lower-left corner.
+4. Existing local search indexes do not need rebuilding merely to use stars and tags.
+5. Open a conversation to add tags or star it, or use the star control directly from a list/search result.
 
 ## Dropbox setup
 
-Archive uses a Dropbox API app with:
+Archive uses a Dropbox API app with Scoped access and **App Folder** content access. In Archive → **Settings**, save the Dropbox **App Key** and connect with OAuth PKCE. Do not put a Dropbox App Secret in the PWA.
 
-- Scoped access
-- **App Folder** content access
-- file read/write permissions required by Archive
-- the exact deployed Archive URL registered as an OAuth redirect URI
+## Deliberately not in this build
 
-In Archive → **Settings**, save the Dropbox **App Key** and connect with OAuth PKCE. Do not put a Dropbox App Secret in the PWA.
-
-## Dropbox layout
-
-```text
-Archive/
-├── Conversations/
-│   └── <conversation-id>--<sha256>.json
-├── Markdown/
-│   └── <conversation-id>--<sha256>.md
-└── Attachments/
-    └── index.json
-
-System/
-├── archive-index.json
-└── imports.json
-```
-
-## Local IndexedDB
-
-The v0.2.6 database schema includes disposable stores for:
-
-- `searchDocuments`
-- `searchMeta`
-
-The database is upgraded to schema version 3 without intentionally deleting the existing Archive settings, import history, or local archive-index mirror.
+- binary `.dat` attachment payload upload
+- latest/previous source-ZIP retention in Dropbox
+- folders, notes, saved searches, or bulk organization
+- semantic/vector search
+- reconstructed ChatGPT Project membership unless a reliable mapping is available
 
 ## Tests
 
@@ -112,8 +84,4 @@ No npm packages are required.
 npm test
 ```
 
-The suite covers ZIP parsing, active-branch reconstruction, import merge/commit safety, Dropbox PKCE/repository behavior, resilient import, local search indexing, ranking/query behavior, browse/transcript rendering, service-worker update safety, and PWA metadata.
-
-## Cache recovery
-
-If an old service worker ever serves stale Archive code after a local database upgrade, visit `reset.html` once. It unregisters Archive service workers and clears only Archive application-shell caches; it does not delete IndexedDB or Dropbox settings.
+The suite covers ZIP parsing, import safety, Dropbox PKCE/repository behavior, resilient import, local search, organization metadata, stars/tags, transcript/source-link rendering, service-worker update safety, and PWA metadata.

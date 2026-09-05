@@ -22,6 +22,7 @@ function navLink(route, href, label) {
   const active = route === target
     || (route === 'home' && href === '#/')
     || (route === 'conversation' && target === 'conversations')
+    || (route === 'tags' && target === 'tags')
   return `<a class="nav-link${active ? ' is-active' : ''}" href="${href}">${escapeHtml(label)}</a>`
 }
 
@@ -51,10 +52,25 @@ function encodeConversationHref(conversationId, query = '', messageId = '') {
 
 function resultMeta(result) {
   const labels = []
-  if (result.isStarred) labels.push('Starred')
+  if (result.isStarred) labels.push('ChatGPT Starred')
   if (result.isArchived) labels.push('Archived')
   if (result.presentInLatestExport === false) labels.push('Archive only')
   return labels
+}
+
+function starIcon() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.12 2.12 0 0 0 1.595 1.16l5.166.751a.53.53 0 0 1 .294.904l-3.738 3.643a2.12 2.12 0 0 0-.61 1.878l.882 5.146a.53.53 0 0 1-.77.559l-4.62-2.429a2.12 2.12 0 0 0-1.969 0l-4.62 2.43a.53.53 0 0 1-.77-.56l.882-5.145a2.12 2.12 0 0 0-.61-1.879L2.16 9.79a.53.53 0 0 1 .294-.904l5.165-.752a2.12 2.12 0 0 0 1.597-1.16z"/></svg>'
+}
+
+function starButton(conversationId, starred) {
+  return `<button class="star-button${starred ? ' is-starred' : ''}" type="button" data-star-conversation="${escapeHtml(conversationId)}" data-starred="${starred ? 'true' : 'false'}" aria-label="${starred ? 'Remove Archive star' : 'Add Archive star'}" title="${starred ? 'Unstar' : 'Star'}">${starIcon()}</button>`
+}
+
+function tagBadges(tags = [], { removable = false } = {}) {
+  return (tags ?? []).map(tag => removable
+    ? `<span class="tag-chip">${escapeHtml(tag)}<button type="button" data-remove-tag="${escapeHtml(tag)}" aria-label="Remove tag ${escapeHtml(tag)}">×</button></span>`
+    : `<span class="tag-chip">${escapeHtml(tag)}</span>`
+  ).join('')
 }
 
 function renderResultRow(result, query = '') {
@@ -69,14 +85,18 @@ function renderResultRow(result, query = '') {
   const labels = resultMeta(result)
   return `
     <article class="conversation-row search-result-row">
-      <a class="conversation-row-link" href="${href}">
-        <div class="conversation-row-main">
-          <h3>${escapeHtml(result.title || 'Untitled conversation')}</h3>
-          <p class="conversation-date">Updated ${formatDateValue(result.updateTime)}</p>
-          ${labels.length ? `<div class="row-badges">${labels.map(label => `<span>${escapeHtml(label)}</span>`).join('')}</div>` : ''}
-        </div>
-        ${excerpts ? `<div class="search-excerpts">${excerpts}</div>` : ''}
-      </a>
+      <div class="conversation-row-grid">
+        <a class="conversation-row-link" href="${href}">
+          <div class="conversation-row-main">
+            <h3>${escapeHtml(result.title || 'Untitled conversation')}</h3>
+            <p class="conversation-date">Updated ${formatDateValue(result.updateTime)}</p>
+            ${result.tags?.length ? `<div class="tag-list compact">${tagBadges(result.tags)}</div>` : ''}
+            ${labels.length ? `<div class="row-badges">${labels.map(label => `<span>${escapeHtml(label)}</span>`).join('')}</div>` : ''}
+          </div>
+          ${excerpts ? `<div class="search-excerpts">${excerpts}</div>` : ''}
+        </a>
+        <div class="conversation-row-actions">${starButton(result.conversationId, Boolean(result.starred))}</div>
+      </div>
     </article>
   `
 }
@@ -92,6 +112,8 @@ export function renderAppShell({ route, content, version }) {
         <nav class="primary-nav" aria-label="Primary">
           ${navLink(route, '#/', 'Home')}
           ${navLink(route, '#/conversations', 'All Conversations')}
+          ${navLink(route, '#/starred', 'Starred')}
+          ${navLink(route, '#/tags', 'Tags')}
           ${navLink(route, '#/import', 'Import')}
           ${navLink(route, '#/settings', 'Settings')}
         </nav>
@@ -276,7 +298,7 @@ export function renderImportPreview({ parsedExport, preview, dropboxConnected, i
       ${anomaly ? `<div class="notice error"><strong>Import warning.</strong> ${escapeHtml(anomaly)}<label class="confirm-row"><input id="confirm-anomaly" type="checkbox"> I reviewed this warning and want to commit the export without deleting the missing conversations.</label></div>` : ''}
 
       <div class="notice">
-        <strong>v0.2.6 scope.</strong>
+        <strong>v0.3.0 scope.</strong>
         Conversation source JSON, readable Markdown, and attachment metadata are imported now. Binary attachments and latest/previous source-ZIP retention come in the next v0.2.x step.
       </div>
 
@@ -289,19 +311,29 @@ export function renderImportPreview({ parsedExport, preview, dropboxConnected, i
 }
 
 
-export function renderConversationListPage({ documents = [], searchStatus = null }) {
+export function renderConversationListPage({
+  documents = [],
+  searchStatus = null,
+  title = 'All Conversations',
+  eyebrow = 'Library',
+  emptyText = 'No conversations in this view.',
+}) {
   const sorted = [...documents].sort((a, b) => Number(b.updateTime ?? 0) - Number(a.updateTime ?? 0) || String(a.title).localeCompare(String(b.title)))
   const list = sorted.map(document => {
     const labels = resultMeta(document)
     return `
       <article class="conversation-row">
-        <a class="conversation-row-link" href="${encodeConversationHref(document.conversationId)}">
-          <div class="conversation-row-main">
-            <h3>${escapeHtml(document.title || 'Untitled conversation')}</h3>
-            <p class="conversation-date">Updated ${formatDateValue(document.updateTime)} · ${escapeHtml(document.messages?.length ?? 0)} visible messages</p>
-            ${labels.length ? `<div class="row-badges">${labels.map(label => `<span>${escapeHtml(label)}</span>`).join('')}</div>` : ''}
-          </div>
-        </a>
+        <div class="conversation-row-grid">
+          <a class="conversation-row-link" href="${encodeConversationHref(document.conversationId)}">
+            <div class="conversation-row-main">
+              <h3>${escapeHtml(document.title || 'Untitled conversation')}</h3>
+              <p class="conversation-date">Updated ${formatDateValue(document.updateTime)} · ${escapeHtml(document.messages?.length ?? 0)} visible messages</p>
+              ${document.tags?.length ? `<div class="tag-list compact">${tagBadges(document.tags)}</div>` : ''}
+              ${labels.length ? `<div class="row-badges">${labels.map(label => `<span>${escapeHtml(label)}</span>`).join('')}</div>` : ''}
+            </div>
+          </a>
+          <div class="conversation-row-actions">${starButton(document.conversationId, Boolean(document.starred))}</div>
+        </div>
       </article>
     `
   }).join('')
@@ -310,12 +342,31 @@ export function renderConversationListPage({ documents = [], searchStatus = null
   return `
     <section class="page page-conversations">
       <header class="page-header compact">
-        <p class="eyebrow">Library</p>
-        <h1>All Conversations</h1>
-        <p class="lede">${escapeHtml(sorted.length)} conversations indexed locally on this device.</p>
+        <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+        <h1>${escapeHtml(title)}</h1>
+        <p class="lede">${escapeHtml(sorted.length)} ${sorted.length === 1 ? 'conversation' : 'conversations'} in this view.</p>
       </header>
       ${notReady ? '<div class="notice"><strong>Local index is not current.</strong> Build or rebuild it from Home before relying on this list.</div>' : ''}
-      <div class="conversation-list">${list || '<p class="empty-state">No local conversation index yet. Return Home and build the local search index.</p>'}</div>
+      <div class="conversation-list">${list || `<p class="empty-state">${escapeHtml(emptyText)}</p>`}</div>
+    </section>
+  `
+}
+
+export function renderTagsPage({ documents = [] }) {
+  const counts = new Map()
+  for (const document of documents) {
+    for (const tag of document.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1)
+  }
+  const tags = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
+  const rows = tags.map(([tag, count]) => `
+    <a class="tag-directory-row" href="#/tags/${encodeURIComponent(tag)}">
+      <span>${escapeHtml(tag)}</span><strong>${escapeHtml(count)} ${count === 1 ? 'conversation' : 'conversations'}</strong>
+    </a>
+  `).join('')
+  return `
+    <section class="page page-tags">
+      <header class="page-header compact"><p class="eyebrow">Organization</p><h1>Tags</h1><p class="lede">Tags are private Archive metadata synced through Dropbox.</p></header>
+      <div class="tag-directory">${rows || '<p class="empty-state">No tags yet. Open a conversation to add one.</p>'}</div>
     </section>
   `
 }
@@ -343,14 +394,20 @@ export function renderConversationPage({ document, query = '', messageId = '' })
       </article>
     `
   }).join('')
+  const sourceHref = `https://chatgpt.com/c/${encodeURIComponent(document.conversationId)}`
 
   return `
     <section class="page page-conversation">
       <header class="page-header compact conversation-header">
         <p class="eyebrow"><a href="#/conversations">All Conversations</a> / Archived transcript</p>
-        <h1>${escapeHtml(document.title || 'Untitled conversation')}</h1>
+        <div class="conversation-title-row"><h1>${escapeHtml(document.title || 'Untitled conversation')}</h1>${starButton(document.conversationId, Boolean(document.starred))}</div>
         <p class="lede">Updated ${formatDateValue(document.updateTime)} · ${escapeHtml(document.messages?.length ?? 0)} visible messages${query ? ` · opened from search “${escapeHtml(query)}”` : ''}</p>
+        <div class="conversation-actions"><a class="button secondary" href="${escapeHtml(sourceHref)}" target="_blank" rel="noopener noreferrer">Open in ChatGPT ↗</a></div>
       </header>
+      <section class="organization-panel" aria-label="Archive organization">
+        <div><strong>Tags</strong><div class="tag-list">${tagBadges(document.tags ?? [], { removable: true }) || '<span class="muted">No tags</span>'}</div></div>
+        <form id="add-tag-form" class="tag-form"><input id="new-tag" class="text-input" type="text" maxlength="60" placeholder="Add a tag" aria-label="Add a tag"><button class="button secondary" type="submit">Add Tag</button></form>
+      </section>
       <div class="transcript">${messages || '<p class="empty-state">No visible user/assistant text was found on the active branch.</p>'}</div>
     </section>
   `

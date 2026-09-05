@@ -7,6 +7,7 @@ import { DropboxArchiveRepository } from './dropbox/archiveRepository.js'
 import { getCapabilityReport, runIndexedDbSelfTest } from './features/selfCheck.js'
 import { buildLocalSearchIndex, getLocalSearchStatus } from './search/indexService.js'
 import { searchDocuments } from './search/searchIndex.js'
+import { loadOrganizationMetadata, updateConversationOrganization, normalizeTags } from './organization/metadataService.js'
 import {
   makeImportId,
   progressFromCommitEvent,
@@ -24,9 +25,10 @@ import {
   renderSettingsPage,
   renderConversationListPage,
   renderConversationPage,
+  renderTagsPage,
 } from './ui.js'
 
-const VERSION = '0.2.6'
+const VERSION = '0.3.0'
 const root = document.getElementById('app')
 
 const state = {
@@ -38,6 +40,8 @@ const state = {
   indexedDbWriteOk: null,
   settingsMessage: null,
   searchQuery: '',
+  organizationLoaded: false,
+  organizationError: null,
 }
 
 let db
@@ -281,6 +285,76 @@ function attachImportHandlers(dropboxConnected) {
   attachPreviewHandlers(dropboxConnected)
 }
 
+async function ensureOrganizationMetadata(dropboxConnected) {
+  if (!dropboxConnected || state.organizationLoaded) return
+  try {
+    const repository = await createDropboxRepository()
+    await loadOrganizationMetadata({ repository, db })
+    state.organizationLoaded = true
+    state.organizationError = null
+  } catch (error) {
+    state.organizationError = error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function updateOrganization(conversationId, patch) {
+  if (!await isDropboxConnected()) throw new Error('Connect Dropbox before changing stars or tags')
+  const repository = await createDropboxRepository()
+  return updateConversationOrganization({ conversationId, patch, repository, db })
+}
+
+function attachOrganizationHandlers() {
+  for (const button of document.querySelectorAll('[data-star-conversation]')) {
+    button.addEventListener('click', async event => {
+      event.preventDefault()
+      event.stopPropagation()
+      button.disabled = true
+      try {
+        await updateOrganization(button.dataset.starConversation, { starred: button.dataset.starred !== 'true' })
+        await render()
+      } catch (error) {
+        button.disabled = false
+        showPageNotice(error instanceof Error ? error.message : String(error), true)
+      }
+    })
+  }
+
+  const form = document.getElementById('add-tag-form')
+  form?.addEventListener('submit', async event => {
+    event.preventDefault()
+    const input = document.getElementById('new-tag')
+    const tag = input?.value.trim() ?? ''
+    if (!tag) return
+    const route = parseAppRoute(location.hash)
+    if (route.name !== 'conversation') return
+    const current = await db.get('metadata', route.conversationId)
+    try {
+      await updateOrganization(route.conversationId, { tags: normalizeTags([...(current?.tags ?? []), tag]) })
+      await render()
+    } catch (error) {
+      showPageNotice(error instanceof Error ? error.message : String(error), true)
+    }
+  })
+
+  for (const button of document.querySelectorAll('[data-remove-tag]')) {
+    button.addEventListener('click', async () => {
+      const route = parseAppRoute(location.hash)
+      if (route.name !== 'conversation') return
+      const current = await db.get('metadata', route.conversationId)
+      const removeKey = String(button.dataset.removeTag ?? '').toLocaleLowerCase()
+      const tags = (current?.tags ?? []).filter(tag => tag.toLocaleLowerCase() !== removeKey)
+      button.disabled = true
+      try {
+        await updateOrganization(route.conversationId, { tags })
+        await render()
+      } catch (error) {
+        button.disabled = false
+        showPageNotice(error instanceof Error ? error.message : String(error), true)
+      }
+    })
+  }
+}
+
 function attachHomeHandlers({ dropboxConnected, archiveIndex }) {
   const searchForm = document.getElementById('archive-search-form')
   const searchInput = document.getElementById('archive-search')
@@ -372,6 +446,7 @@ function attachSettingsHandlers(appKey, dropboxConnected) {
     if (!dropboxConnected) return
     const session = createDropboxSession(appKey)
     await session.disconnect()
+    state.organizationLoaded = false
     state.settingsMessage = 'Dropbox disconnected. The public App Key remains saved.'
     await render()
   })
@@ -400,6 +475,7 @@ async function render() {
     latestImportActivity(),
   ])
   const archiveIndex = await localArchiveIndex(lastImport)
+  await ensureOrganizationMetadata(dropboxConnected)
   const searchStatus = await getLocalSearchStatus({ archiveIndex, db })
 
   let content
@@ -422,6 +498,18 @@ async function render() {
   } else if (routeInfo.name === 'conversations') {
     const documents = await db.getAll('searchDocuments')
     content = renderConversationListPage({ documents, searchStatus })
+  } else if (routeInfo.name === 'starred') {
+    const documents = (await db.getAll('searchDocuments')).filter(document => document.starred)
+    content = renderConversationListPage({ documents, searchStatus, title: 'Starred', eyebrow: 'Organization', emptyText: 'No Archive-starred conversations yet.' })
+  } else if (routeInfo.name === 'tags') {
+    const documents = await db.getAll('searchDocuments')
+    if (routeInfo.tag) {
+      const key = routeInfo.tag.toLocaleLowerCase()
+      const tagged = documents.filter(document => (document.tags ?? []).some(tag => String(tag).toLocaleLowerCase() === key))
+      content = renderConversationListPage({ documents: tagged, searchStatus, title: routeInfo.tag, eyebrow: 'Tag', emptyText: `No conversations tagged ${routeInfo.tag}.` })
+    } else {
+      content = renderTagsPage({ documents })
+    }
   } else if (routeInfo.name === 'conversation') {
     const document = await db.get('searchDocuments', routeInfo.conversationId)
     content = renderConversationPage({
@@ -449,6 +537,8 @@ async function render() {
   if (routeInfo.name === 'import') attachImportHandlers(dropboxConnected)
   if (routeInfo.name === 'settings') attachSettingsHandlers(appKey, dropboxConnected)
   if (routeInfo.name === 'conversation') attachConversationHandlers(routeInfo)
+  if (['home', 'conversations', 'starred', 'tags', 'conversation'].includes(routeInfo.name)) attachOrganizationHandlers()
+  if (state.organizationError) showPageNotice(`Archive organization metadata could not sync: ${state.organizationError}`, true)
 }
 
 async function completeDropboxCallbackIfPresent() {

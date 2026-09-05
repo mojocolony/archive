@@ -7,6 +7,12 @@ export function parseAppRoute(hash) {
   if (pathPart === 'import') return { name: 'import' }
   if (pathPart === 'settings') return { name: 'settings' }
   if (pathPart === 'conversations') return { name: 'conversations' }
+  if (pathPart === 'starred') return { name: 'starred' }
+  if (pathPart === 'tags') return { name: 'tags', tag: '' }
+  if (pathPart.startsWith('tags/')) {
+    const encodedTag = pathPart.slice('tags/'.length)
+    return { name: 'tags', tag: encodedTag ? decodeURIComponent(encodedTag) : '' }
+  }
   if (pathPart.startsWith('conversation/')) {
     const encodedId = pathPart.slice('conversation/'.length)
     if (!encodedId) return { name: 'home' }

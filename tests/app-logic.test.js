@@ -104,3 +104,9 @@ test('search-index progress maps local build stages without implying an upload',
   })
   assert.equal(progressFromSearchIndexEvent({ stage: 'complete', completed: 100, total: 100 }).label, 'Local search index ready')
 })
+
+test('organization routes recognize starred, tags, and an individual tag', () => {
+  assert.deepEqual(parseAppRoute('#/starred'), { name: 'starred' })
+  assert.deepEqual(parseAppRoute('#/tags'), { name: 'tags', tag: '' })
+  assert.deepEqual(parseAppRoute('#/tags/Photo%20Apps'), { name: 'tags', tag: 'Photo Apps' })
+})

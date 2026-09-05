@@ -67,7 +67,8 @@ export async function buildLocalSearchIndex({
       })
 
       const source = await repository.getConversationSource(entry.sourcePath)
-      const document = buildSearchDocument(entry, source)
+      const metadata = await db.get('metadata', entry.conversationId)
+      const document = buildSearchDocument(entry, source, metadata)
       await db.put('searchDocuments', document)
       completed += 1
       onProgress({

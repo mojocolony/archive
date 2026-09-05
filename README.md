@@ -1,8 +1,8 @@
-# Archive — v0.2.0 Conversation Importer
+# Archive — v0.2.1 Conversation Importer
 
-Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. v0.2.0 is the first build that performs a **real conversation import**.
+Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. v0.2.1 is the first build that performs a **real conversation import**.
 
-## What v0.2.0 does
+## What v0.2.1 does
 
 - Reads the official ChatGPT export ZIP locally in the browser.
 - Handles ZIP64 exports without loading the multi-gigabyte ZIP into memory.
@@ -24,7 +24,7 @@ Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT
 - Writes the archive index **last**, making it the commit point for the import.
 - Mirrors the committed archive index into local IndexedDB as rebuildable derived data.
 
-## v0.2.0 deliberately does not yet
+## v0.2.1 deliberately does not yet
 
 - upload the 3+ GB of binary `.dat` attachment payloads
 - retain `latest.zip` / `previous.zip` in Dropbox
@@ -93,3 +93,8 @@ npm test
 ```
 
 The core parser, ZIP64 reader, active-branch reconstruction, privacy filtering, merge logic, Dropbox repository, PKCE flow, and UI rendering are covered with Node's built-in test runner.
+
+
+## v0.2.1 cache recovery
+
+If a previous service worker serves an older Archive build after the local database has already upgraded, visit `reset.html` once. It unregisters Archive service workers and clears only `archive-shell-*` caches; it does not delete IndexedDB or Dropbox settings.

@@ -21,7 +21,7 @@ import {
   renderSettingsPage,
 } from './ui.js'
 
-const VERSION = '0.2.0'
+const VERSION = '0.2.1'
 const root = document.getElementById('app')
 
 const state = {
@@ -361,7 +361,8 @@ async function completeDropboxCallbackIfPresent() {
 async function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || !isSecureContext) return
   try {
-    await navigator.serviceWorker.register('./sw.js')
+    const registration = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+    await registration.update()
   } catch (error) {
     console.warn('Archive service worker registration failed', error)
   }
@@ -369,9 +370,9 @@ async function registerServiceWorker() {
 
 async function start() {
   try {
+    await registerServiceWorker()
     db = await openArchiveDb()
     await completeDropboxCallbackIfPresent()
-    await registerServiceWorker()
     addEventListener('hashchange', () => render().catch(console.error))
     await render()
   } catch (error) {

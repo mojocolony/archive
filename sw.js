@@ -1,7 +1,10 @@
-const CACHE_NAME = 'archive-shell-v0.2.0'
+const CACHE_NAME = 'archive-shell-v0.2.1'
+const NETWORK_FIRST_DESTINATIONS = new Set(['document', 'script', 'style'])
 const APP_SHELL = [
   './',
   './index.html',
+  './reset.html',
+  './reset.js',
   './src/styles.css',
   './src/app.js',
   './src/appLogic.js',
@@ -39,6 +42,32 @@ self.addEventListener('activate', event => {
   self.clients.claim()
 })
 
+async function updateCache(request, response) {
+  if (response.ok && response.type === 'basic') {
+    const cache = await caches.open(CACHE_NAME)
+    await cache.put(request, response.clone())
+  }
+  return response
+}
+
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request, { cache: 'no-store' })
+    return updateCache(request, response)
+  } catch (error) {
+    const cached = await caches.match(request)
+    if (cached) return cached
+    throw error
+  }
+}
+
+async function cacheFirst(request) {
+  const cached = await caches.match(request)
+  if (cached) return cached
+  const response = await fetch(request)
+  return updateCache(request, response)
+}
+
 self.addEventListener('fetch', event => {
   const { request } = event
   if (request.method !== 'GET') return
@@ -46,15 +75,8 @@ self.addEventListener('fetch', event => {
   if (!['document', 'script', 'style', 'image', 'manifest'].includes(request.destination)) return
 
   event.respondWith(
-    caches.match(request).then(cached => {
-      if (cached) return cached
-      return fetch(request).then(response => {
-        if (response.ok && response.type === 'basic') {
-          const copy = response.clone()
-          caches.open(CACHE_NAME).then(cache => cache.put(request, copy))
-        }
-        return response
-      })
-    }),
+    NETWORK_FIRST_DESTINATIONS.has(request.destination)
+      ? networkFirst(request)
+      : cacheFirst(request),
   )
 })

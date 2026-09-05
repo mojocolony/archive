@@ -22,20 +22,41 @@ function transactionDone(transaction) {
   })
 }
 
+export async function openCompatibleDatabase(name, targetVersion, indexedDbFactory, onUpgrade) {
+  const open = version => {
+    const request = version === undefined
+      ? indexedDbFactory.open(name)
+      : indexedDbFactory.open(name, version)
+
+    if (version !== undefined && onUpgrade) {
+      request.onupgradeneeded = () => onUpgrade(request.result)
+    }
+    return requestAsPromise(request)
+  }
+
+  try {
+    return await open(targetVersion)
+  } catch (error) {
+    if (error?.name !== 'VersionError') throw error
+    return open(undefined)
+  }
+}
+
 export async function openArchiveDb(name = DB_NAME, indexedDbFactory = globalThis.indexedDB) {
   if (!indexedDbFactory) throw new Error('IndexedDB is not available in this browser')
 
-  const request = indexedDbFactory.open(name, ARCHIVE_DB_VERSION)
-  request.onupgradeneeded = () => {
-    const db = request.result
-    for (const [storeName, definition] of Object.entries(ARCHIVE_STORE_DEFINITIONS)) {
-      if (!db.objectStoreNames.contains(storeName)) {
-        db.createObjectStore(storeName, definition)
+  const database = await openCompatibleDatabase(
+    name,
+    ARCHIVE_DB_VERSION,
+    indexedDbFactory,
+    db => {
+      for (const [storeName, definition] of Object.entries(ARCHIVE_STORE_DEFINITIONS)) {
+        if (!db.objectStoreNames.contains(storeName)) {
+          db.createObjectStore(storeName, definition)
+        }
       }
-    }
-  }
-
-  const database = await requestAsPromise(request)
+    },
+  )
 
   return {
     async get(storeName, key) {

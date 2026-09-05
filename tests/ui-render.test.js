@@ -287,3 +287,44 @@ test('search excerpts hide internal ChatGPT citation tokens', () => {
   assert.match(html, /works\./)
   assert.doesNotMatch(html, /turn1search2/)
 })
+
+test('conversation transcript strips standalone ChatGPT memcite tokens', () => {
+  const html = renderConversationPage({ document: {
+    conversationId: 'c-memcite', title: 'Memory citations', updateTime: 20,
+    messages: [{
+      messageId: 'm1', role: 'assistant', createTime: 10,
+      text: 'RAM, Intel HD Graphics — limits. memcite The best use case would be local streaming. memcite',
+    }],
+  } })
+  assert.match(html, /RAM, Intel HD Graphics — limits\./)
+  assert.match(html, /The best use case would be local streaming\./)
+  assert.doesNotMatch(html, /memcite/i)
+  assert.doesNotMatch(html, /|/)
+})
+
+test('search excerpts strip standalone ChatGPT memcite tokens', () => {
+  const html = renderHomePage({
+    lastInspection: { status: 'imported', importedAt: '2026-09-05T02:00:00.000Z', conversationCount: 1 },
+    dropboxConnected: true,
+    searchStatus: { state: 'current', indexedCount: 1, total: 1, builtAt: '2026-09-05T03:00:00.000Z' },
+    searchQuery: 'RAM',
+    searchResults: [{ conversationId: 'c1', title: 'Jellyfin', updateTime: 10, excerpts: [{ messageId: 'm1', role: 'assistant', text: 'RAM limits. memcite Good for Jellyfin.' }] }],
+  })
+  assert.match(html, /RAM limits\./)
+  assert.match(html, /Good for Jellyfin\./)
+  assert.doesNotMatch(html, /memcite/i)
+  assert.doesNotMatch(html, /|/)
+})
+
+test('conversation transcript auto-links safe bare web URLs without swallowing sentence punctuation', () => {
+  const html = renderConversationPage({ document: {
+    conversationId: 'c-url', title: 'Bare URL', updateTime: 20,
+    messages: [{
+      messageId: 'm1', role: 'assistant', createTime: 10,
+      text: 'Buy this: https://www.amazon.ca/dp/B0GZ34Z4BL/ref=ascdfB0GZ34Z4BL?tag=test. Then continue.',
+    }],
+  } })
+  assert.match(html, /Buy this:/)
+  assert.match(html, /<a href="https:\/\/www\.amazon\.ca\/dp\/B0GZ34Z4BL\/ref=ascdfB0GZ34Z4BL\?tag=test" target="_blank" rel="noopener noreferrer">https:\/\/www\.amazon\.ca\/dp\/B0GZ34Z4BL\/ref=ascdfB0GZ34Z4BL\?tag=test<\/a>\./)
+  assert.match(html, /Then continue\./)
+})

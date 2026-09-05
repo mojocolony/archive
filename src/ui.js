@@ -9,7 +9,7 @@ export function escapeHtml(value) {
 
 export function stripInternalReferenceTokens(value) {
   return String(value ?? '')
-    .replace(/(?:cite|filecite)[^]*/gi, '')
+    .replace(/(?:cite|filecite|memcite)(?:[^]*)?/gi, '')
     .replace(/[ \t]{2,}/g, ' ')
 }
 
@@ -37,6 +37,17 @@ function renderInlineMarkdown(value) {
     const safeHref = safeMarkdownHref(href)
     if (!safeHref) return match
     return protect(`<a href="${escapeHtml(safeHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`)
+  })
+  source = source.replace(/\bhttps?:\/\/[^\s<>]+/gi, match => {
+    let href = match
+    let trailing = ''
+    while (/[.,!?;:]$/.test(href)) {
+      trailing = href.slice(-1) + trailing
+      href = href.slice(0, -1)
+    }
+    const safeHref = safeMarkdownHref(href)
+    if (!safeHref) return match
+    return `${protect(`<a href="${escapeHtml(safeHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(href)}</a>`)}${trailing}`
   })
 
   let html = escapeHtml(source)

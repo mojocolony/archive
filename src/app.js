@@ -28,7 +28,7 @@ import {
   renderTagsPage,
 } from './ui.js'
 
-const VERSION = '0.3.2'
+const VERSION = '0.3.3'
 const root = document.getElementById('app')
 
 const state = {

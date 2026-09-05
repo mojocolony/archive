@@ -39,3 +39,79 @@ export function tokenIsUsable(token, nowMs = Date.now()) {
   if (!token.expiresAt) return true
   return token.expiresAt > nowMs + 60_000
 }
+
+export function makeImportId(parsedExport) {
+  return `import-${compactIso(parsedExport.parsedAt)}`
+}
+
+export function progressFromParseEvent(event) {
+  if (event.stage === 'directory') {
+    return {
+      label: 'Reading ZIP directory…',
+      detail: 'Only ZIP metadata is read before Archive opens the required JSON entries.',
+      percent: null,
+    }
+  }
+
+  if (event.stage === 'conversations') {
+    const total = Number(event.total ?? 0)
+    const completed = Number(event.completed ?? 0)
+    return {
+      label: 'Reading conversations…',
+      detail: `${completed} of ${total} conversation files${event.detail ? ` · ${event.detail}` : ''}`,
+      percent: total > 0 ? Math.round((completed / total) * 100) : null,
+    }
+  }
+
+  if (event.stage === 'files') {
+    return {
+      label: 'Reading file metadata…',
+      detail: 'Linking exported file records back to conversations and messages.',
+      percent: event.completed ? 100 : null,
+    }
+  }
+
+  return {
+    label: 'Analyzing export…',
+    detail: '',
+    percent: null,
+  }
+}
+
+export function progressFromCommitEvent(event) {
+  if (event.stage === 'prepare') {
+    return {
+      label: 'Preparing Dropbox archive…',
+      detail: 'Creating the Archive app folders if needed.',
+      percent: null,
+    }
+  }
+
+  if (event.stage === 'conversations') {
+    const total = Number(event.total ?? 0)
+    const completed = Number(event.completed ?? 0)
+    return {
+      label: 'Saving changed conversations…',
+      detail: `${completed} of ${total} saved`,
+      percent: total > 0 ? Math.round((completed / total) * 100) : 100,
+    }
+  }
+
+  if (event.stage === 'attachments') {
+    return {
+      label: 'Saving attachment metadata…',
+      detail: 'Binary attachments are not uploaded in v0.2.0.',
+      percent: event.completed ? 100 : null,
+    }
+  }
+
+  if (event.stage === 'commit') {
+    return {
+      label: 'Committing archive index…',
+      detail: 'The index is written last so a failed upload cannot replace the previous committed archive.',
+      percent: event.completed ? 100 : null,
+    }
+  }
+
+  return { label: 'Importing…', detail: '', percent: null }
+}

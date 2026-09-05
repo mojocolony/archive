@@ -43,32 +43,40 @@ export function renderAppShell({ route, content, version }) {
 }
 
 export function renderHomePage({ lastInspection, dropboxConnected }) {
-  const inspectionText = lastInspection
-    ? `${escapeHtml(lastInspection.sourceFileName)} · ${escapeHtml(lastInspection.inspectedAt.slice(0, 10))}`
-    : 'No export inspected yet'
+  const lastDate = lastInspection?.importedAt ?? lastInspection?.inspectedAt ?? null
+  const imported = lastInspection?.status === 'imported'
+  const activityTitle = imported
+    ? `${escapeHtml(lastInspection.conversationCount ?? 0)} conversations`
+    : lastInspection
+      ? 'Export analyzed'
+      : 'No export imported yet'
+  const activityDetail = lastInspection
+    ? `${escapeHtml(lastInspection.sourceFileName)}${lastDate ? ` · ${escapeHtml(String(lastDate).slice(0, 10))}` : ''}`
+    : 'Choose an official ChatGPT export to begin.'
 
   return `
     <section class="page page-home">
       <header class="page-header">
         <p class="eyebrow">ChatGPT archive dashboard</p>
         <h1>Find what you remember.</h1>
-        <p class="lede">Archive will keep the durable copy in Dropbox and the search index on your devices. This first build validates the import path before any conversation parser is allowed to make assumptions.</p>
+        <p class="lede">Archive keeps a durable conversation archive in Dropbox and will build the full-text search index locally on your devices.</p>
       </header>
 
       <div class="search-placeholder" aria-disabled="true">
-        <span>Search becomes available after the first real import</span>
+        <span>Search arrives in the next build after the conversation archive is populated</span>
       </div>
 
       <div class="home-grid">
         <article class="panel">
-          <p class="panel-kicker">Import status</p>
-          <h2>${inspectionText}</h2>
-          <a class="button primary" href="#/import">Inspect ChatGPT Export</a>
+          <p class="panel-kicker">Archive status</p>
+          <h2>${activityTitle}</h2>
+          <p>${activityDetail}</p>
+          <a class="button primary" href="#/import">Import ChatGPT Export</a>
         </article>
         <article class="panel">
           <p class="panel-kicker">Dropbox</p>
           <h2>${dropboxConnected ? 'Connected' : 'Not connected'}</h2>
-          <p>${dropboxConnected ? 'Safe inspection reports can be stored in the app folder.' : 'Optional for the first inspection. Connect it before the real importer phase.'}</p>
+          <p>${dropboxConnected ? 'Conversation archive is stored in Dropbox; the search index remains local.' : 'Connect Dropbox before committing the first archive import.'}</p>
           <a class="button secondary" href="#/settings">${dropboxConnected ? 'Dropbox Settings' : 'Connect Dropbox'}</a>
         </article>
       </div>
@@ -76,24 +84,26 @@ export function renderHomePage({ lastInspection, dropboxConnected }) {
   `
 }
 
-export function renderImportPage({ dropboxConnected, progress = null, error = null, report = null }) {
-  const progressHtml = progress
-    ? `<div class="progress-card" role="status"><strong>${escapeHtml(progress.label)}</strong><span>${escapeHtml(progress.detail ?? '')}</span>${progress.percent == null ? '' : `<progress max="100" value="${progress.percent}"></progress>`}</div>`
-    : ''
-  const errorHtml = error ? `<div class="notice error" role="alert">${escapeHtml(error)}</div>` : ''
-
+export function renderImportPage({
+  dropboxConnected,
+  parsedExport = null,
+  preview = null,
+  importResult = null,
+}) {
   return `
     <section class="page page-import">
       <header class="page-header compact">
-        <p class="eyebrow">Import Inspector</p>
-        <h1>Inspect a ChatGPT export</h1>
-        <p class="lede">This first step does not import or save conversation text. It reads the ZIP directory and a bounded prefix of top-level JSON files only to identify filenames and field names.</p>
+        <p class="eyebrow">Import</p>
+        <h1>Import a ChatGPT export</h1>
+        <p class="lede">Archive reads the official export locally, compares it with the last committed archive, and shows the changes before anything is written to Dropbox.</p>
       </header>
 
       <div class="notice privacy">
-        <strong>Private by design.</strong>
-        <span>The local report may show filenames. The report you download or save to Dropbox removes attachment filenames and never includes message values.</span>
+        <strong>Local first.</strong>
+        <span>Nothing is uploaded while Archive analyzes the ZIP. Conversation data goes to Dropbox only after you review the preview and choose Import.</span>
       </div>
+
+      ${dropboxConnected ? '' : '<div class="notice"><strong>Dropbox is not connected.</strong> You can analyze the export now, but <a href="#/settings">Connect Dropbox before importing</a>.</div>'}
 
       <div class="panel import-panel">
         <label class="file-picker" for="chatgpt-export">
@@ -102,15 +112,70 @@ export function renderImportPage({ dropboxConnected, progress = null, error = nu
           <input id="chatgpt-export" type="file" accept=".zip,application/zip">
         </label>
         <div class="button-row">
-          <button class="button primary" id="inspect-button" type="button" disabled>Inspect Export</button>
+          <button class="button primary" id="analyze-button" type="button" disabled>Analyze Export</button>
           <button class="button secondary" id="clear-import-button" type="button">Clear</button>
-          ${report ? '' : '<button class="button secondary" type="button" disabled>Save Safe Report to Dropbox</button>'}
         </div>
       </div>
 
-      ${progressHtml}
-      ${errorHtml}
-      <div id="inspection-results">${report ? renderInspectionReport(report, { dropboxConnected }) : ''}</div>
+      <div id="import-results">${parsedExport && preview ? renderImportPreview({ parsedExport, preview, dropboxConnected, importResult }) : ''}</div>
+    </section>
+  `
+}
+
+function statCard(value, label) {
+  return `<div class="import-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`
+}
+
+export function renderImportPreview({ parsedExport, preview, dropboxConnected, importResult = null }) {
+  const anomaly = preview.anomalyWarning
+  const projectNote = parsedExport.projectMembershipAvailable
+    ? 'This export contains a direct project_id field on at least one conversation.'
+    : 'Project membership is not directly exposed by the observed export schema, so Archive will not invent Project assignments.'
+  const resultHtml = importResult
+    ? `<div class="notice success"><strong>Import committed.</strong> ${escapeHtml(importResult.uploadedConversationCount)} new/updated conversation versions were saved and the archive index was committed.</div>`
+    : ''
+
+  return `
+    <section class="report import-preview" aria-labelledby="preview-title">
+      <div class="report-heading">
+        <div>
+          <p class="eyebrow">Import preview</p>
+          <h2 id="preview-title">${escapeHtml(parsedExport.sourceFileName)}</h2>
+          <p>${formatBytes(parsedExport.sourceFileSize)} · ${escapeHtml(preview.total)} conversations · ${escapeHtml(parsedExport.stats.visibleMessageCount)} visible messages</p>
+        </div>
+      </div>
+
+      ${resultHtml}
+
+      <div class="import-stats" aria-label="Import changes">
+        ${statCard(preview.newCount, 'new')}
+        ${statCard(preview.updatedCount, 'updated')}
+        ${statCard(preview.unchangedCount, 'unchanged')}
+        ${statCard(preview.missingCount, 'not present in latest export')}
+      </div>
+
+      <div class="panel preview-details">
+        <h3>What Archive found</h3>
+        <ul class="detail-list">
+          <li><span>Conversation files</span><strong>${escapeHtml(parsedExport.stats.shardCount)}</strong></li>
+          <li><span>Attachment metadata records</span><strong>${escapeHtml(parsedExport.stats.attachmentMetadataCount)}</strong></li>
+          <li><span>Linked to a conversation</span><strong>${escapeHtml(parsedExport.stats.linkedAttachmentCount)}</strong></li>
+          <li><span>Parser warnings</span><strong>${escapeHtml(parsedExport.warnings?.length ?? 0)}</strong></li>
+        </ul>
+        <p class="muted">${escapeHtml(projectNote)}</p>
+      </div>
+
+      ${anomaly ? `<div class="notice error"><strong>Import warning.</strong> ${escapeHtml(anomaly)}<label class="confirm-row"><input id="confirm-anomaly" type="checkbox"> I reviewed this warning and want to commit the export without deleting the missing conversations.</label></div>` : ''}
+
+      <div class="notice">
+        <strong>v0.2.0 scope.</strong>
+        Conversation source JSON, readable Markdown, and attachment metadata are imported now. Binary attachments and latest/previous source-ZIP retention come in the next v0.2.x step.
+      </div>
+
+      <div class="button-row">
+        <button class="button primary" id="import-to-dropbox" type="button" ${dropboxConnected && !anomaly ? '' : 'disabled'}>Import Conversations to Dropbox</button>
+        ${dropboxConnected ? '' : '<a class="button secondary" href="#/settings">Connect Dropbox</a>'}
+      </div>
     </section>
   `
 }

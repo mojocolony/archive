@@ -275,6 +275,54 @@ async function readStreamPrefix(stream, maxBytes) {
   return concatChunks(chunks, total)
 }
 
+
+async function readStreamAll(stream) {
+  const reader = stream.getReader()
+  const chunks = []
+  let total = 0
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      total += value.length
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  return concatChunks(chunks, total)
+}
+
+export async function readEntryBytes(file, entry) {
+  if (entry.directory) return new Uint8Array()
+  if (entry.encrypted) throw new Error(`Encrypted ZIP entries are not supported: ${entry.path}`)
+
+  const dataStart = await entryDataStart(file, entry)
+  const compressedBlob = file.slice(dataStart, dataStart + entry.compressedSize)
+
+  if (entry.compressionMethod === 0) {
+    return blobBytes(compressedBlob)
+  }
+
+  if (entry.compressionMethod === 8) {
+    if (typeof DecompressionStream === 'undefined') {
+      throw new Error('This browser does not support streaming DEFLATE decompression')
+    }
+    const stream = compressedBlob.stream().pipeThrough(new DecompressionStream('deflate-raw'))
+    return readStreamAll(stream)
+  }
+
+  throw new Error(
+    `Unsupported ZIP compression method ${entry.compressionMethod}: ${entry.path}`,
+  )
+}
+
+export async function readEntryText(file, entry) {
+  return new TextDecoder('utf-8').decode(await readEntryBytes(file, entry))
+}
+
 export async function readEntryTextPrefix(file, entry, maxBytes = 2 * 1024 * 1024) {
   if (entry.directory) return ''
   if (entry.encrypted) throw new Error(`Encrypted ZIP entries are not supported: ${entry.path}`)

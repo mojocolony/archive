@@ -1,77 +1,95 @@
-# Archive — v0.1.1 Inspector
+# Archive — v0.2.0 Conversation Importer
 
-Archive is a privacy-first PWA for organizing and retrieving ChatGPT history. This first build is deliberately limited to the **Foundation + Import Inspector** milestone.
+Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. v0.2.0 is the first build that performs a **real conversation import**.
 
-It does **not** import your conversations yet. It safely inspects the structure of an official ChatGPT export so the real parser can be built from the current export schema rather than guesses.
+## What v0.2.0 does
 
-## What this build does
+- Reads the official ChatGPT export ZIP locally in the browser.
+- Handles ZIP64 exports without loading the multi-gigabyte ZIP into memory.
+- Reads the observed 2026 sharded conversation files (`conversations-000.json`, etc.) one at a time.
+- Reconstructs the active conversation branch from `current_node` and node `parent` links.
+- Preserves the complete source conversation object as canonical JSON.
+- Generates a readable Markdown copy containing user/assistant-visible text only.
+- Does **not** put internal thought/tool/system/developer structures into the readable transcript.
+- Fingerprints each source conversation with SHA-256.
+- Compares the export with `/System/archive-index.json` in Dropbox and previews:
+  - new conversations
+  - updated conversations
+  - unchanged conversations
+  - conversations not present in the latest export
+- Never deletes a conversation merely because it is absent from a later export.
+- Warns before committing an anomalously large disappearance.
+- Imports file metadata from `library_files.json` and links records back to conversations when the export provides thread/message IDs.
+- Stores changed conversation versions in Dropbox using content-addressed filenames.
+- Writes the archive index **last**, making it the commit point for the import.
+- Mirrors the committed archive index into local IndexedDB as rebuildable derived data.
 
-- Runs as a static PWA with no JavaScript package dependencies.
-- Uses browser IndexedDB for local settings and import-history summaries.
-- Reads a ZIP's central directory rather than loading the entire ZIP into memory.
-- Supports ZIP64 metadata needed by multi-gigabyte archives.
-- Reads only a bounded prefix of top-level JSON files to identify field names and a redacted nested schema tree.
-- Never stores prompt/reply values during inspection.
-- Produces a **Safe Inspection Report** that omits attachment filenames and message values.
-- Can download that safe report as JSON.
-- Can optionally save the safe report in a Dropbox App Folder.
-- Uses Dropbox OAuth authorization-code flow with PKCE and a short-lived access token.
-- Contains no Dropbox app secret and stores no refresh token.
+## v0.2.0 deliberately does not yet
+
+- upload the 3+ GB of binary `.dat` attachment payloads
+- retain `latest.zip` / `previous.zip` in Dropbox
+- build the full-text search interface
+- reconstruct ChatGPT Projects unless the export supplies a verified direct mapping
+
+Those are subsequent v0.2.x / search milestones. The deep inspection showed no direct `project_id` in the observed conversation schema, so Archive does not guess.
 
 ## Deploy to GitHub Pages
 
-1. Create a new GitHub repository for Archive.
-2. Upload the contents of this folder to the repository root.
-3. In GitHub, open **Settings → Pages**.
-4. Deploy from the `main` branch and repository root.
-5. Open the resulting HTTPS URL.
-6. Open **Settings** inside Archive and run **Storage Self Check**.
+1. Upload the **contents of this folder** to the root of the `Archive` repository.
+2. In GitHub, open **Settings → Pages**.
+3. Deploy from `main` and `/root`.
+4. Reload the deployed Archive site after GitHub Pages finishes publishing.
 
-The Import Inspector works without Dropbox, so Dropbox setup can wait until after the first schema inspection.
+## Dropbox setup
 
-## Inspect the real ChatGPT export
-
-1. Open **Import**.
-2. Choose the official ChatGPT export ZIP.
-3. Select **Inspect Export**.
-4. Review the structural report.
-5. Select **Download Safe Report**.
-6. Upload that small JSON report to the ChatGPT conversation where Archive is being developed.
-
-Do **not** upload the original multi-gigabyte ChatGPT export to the repository.
-
-## Optional Dropbox setup
+Archive needs Dropbox before it can commit an import.
 
 Create a Dropbox API app with:
 
 - Scoped access
 - **App Folder** content access
-- `files.content.write` for this inspector build
-- The exact deployed Archive URL registered as an OAuth redirect URI
+- file read/write scopes needed by Archive
+- the exact deployed Archive URL registered as an OAuth redirect URI
 
 In Archive → **Settings**, paste the Dropbox **App Key** and choose **Connect Dropbox**.
 
-The App Key is public OAuth client configuration. Never paste a Dropbox App Secret into Archive or commit one to the repository.
+The App Key is public OAuth client configuration. Do not put a Dropbox App Secret in Archive. The browser uses PKCE and stores only a short-lived Dropbox access token.
+
+## First real import
+
+1. Open **Import**.
+2. Choose the official ChatGPT export ZIP.
+3. Select **Analyze Export**.
+4. Wait while Archive reads the conversation shards and file metadata locally.
+5. Review the import preview.
+6. If Dropbox is connected, select **Import Conversations to Dropbox**.
+7. Leave the tab open until Archive reports that the index was committed.
+
+For the first import, every conversation will be **new**. On later exports, Archive will upload only new or changed conversation versions.
+
+## Dropbox layout in this build
+
+```text
+Archive/
+├── Conversations/
+│   └── <conversation-id>--<sha256>.json
+├── Markdown/
+│   └── <conversation-id>--<sha256>.md
+└── Attachments/
+    └── index.json
+
+System/
+└── archive-index.json
+```
+
+The filenames are content-addressed so existing committed versions are not overwritten before the new archive index is successfully written.
 
 ## Tests
 
-The core modules use Node's built-in test runner and require no npm downloads:
+No npm packages are required.
 
 ```bash
 npm test
 ```
 
-## Current limitation
-
-The browser-only IndexedDB/service-worker integration could not be executed in the build sandbox because its Chromium instance blocks local/file navigation by policy. Archive therefore includes a browser **Storage Self Check** for the deployed app. Core ZIP, JSON-shape, Dropbox PKCE, Dropbox repository, UI-rendering, and routing logic are covered by automated tests.
-
-## Next milestone
-
-After the v0.1.1 Safe Inspection Report is available, use its nested schema tree to build the schema-specific **Archive Import & Merge** layer:
-
-- conversation parser
-- canonical JSON/Markdown archive
-- incremental merging by ChatGPT conversation ID
-- attachment hashing/deduplication
-- latest/previous source-ZIP retention
-- import preview and verification
+The core parser, ZIP64 reader, active-branch reconstruction, privacy filtering, merge logic, Dropbox repository, PKCE flow, and UI rendering are covered with Node's built-in test runner.

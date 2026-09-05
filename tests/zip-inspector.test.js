@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises'
 import {
   readZipDirectory,
   readEntryTextPrefix,
+  readEntryBytes,
+  readEntryText,
   parseZip64ExtendedInfo,
 } from '../src/import/zipDirectory.js'
 
@@ -62,4 +64,23 @@ test('parses ZIP64 extended sizes and offsets in sentinel order', () => {
       diskStart: 0,
     },
   )
+})
+
+
+test('reads a full deflated entry without reading the whole ZIP File', async () => {
+  const file = await fixtureFile()
+  const entries = await readZipDirectory(file)
+  const conversation = entries.find(entry => entry.path === 'conversations.json')
+  const bytes = await readEntryBytes(file, conversation)
+  const text = new TextDecoder().decode(bytes)
+  assert.match(text, /\"title\":\"Example\"/)
+  assert.equal(bytes.length, conversation.originalSize)
+})
+
+test('reads a full ZIP entry as UTF-8 text', async () => {
+  const file = await fixtureFile()
+  const entries = await readZipDirectory(file)
+  const user = entries.find(entry => entry.path === 'user.json')
+  const text = await readEntryText(file, user)
+  assert.match(text, /private@example\.invalid/)
 })

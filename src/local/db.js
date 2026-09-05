@@ -1,9 +1,10 @@
 const DB_NAME = 'archive'
-const DB_VERSION = 1
-const STORE_DEFINITIONS = {
+export const ARCHIVE_DB_VERSION = 2
+export const ARCHIVE_STORE_DEFINITIONS = {
   settings: { keyPath: 'key' },
   imports: { keyPath: 'id' },
   metadata: { keyPath: 'conversationId' },
+  archiveIndex: { keyPath: 'conversationId' },
 }
 
 function requestAsPromise(request) {
@@ -24,10 +25,10 @@ function transactionDone(transaction) {
 export async function openArchiveDb(name = DB_NAME, indexedDbFactory = globalThis.indexedDB) {
   if (!indexedDbFactory) throw new Error('IndexedDB is not available in this browser')
 
-  const request = indexedDbFactory.open(name, DB_VERSION)
+  const request = indexedDbFactory.open(name, ARCHIVE_DB_VERSION)
   request.onupgradeneeded = () => {
     const db = request.result
-    for (const [storeName, definition] of Object.entries(STORE_DEFINITIONS)) {
+    for (const [storeName, definition] of Object.entries(ARCHIVE_STORE_DEFINITIONS)) {
       if (!db.objectStoreNames.contains(storeName)) {
         db.createObjectStore(storeName, definition)
       }
@@ -70,7 +71,7 @@ export async function openArchiveDb(name = DB_NAME, indexedDbFactory = globalThi
     },
 
     async clearAll() {
-      const storeNames = Object.keys(STORE_DEFINITIONS)
+      const storeNames = Object.keys(ARCHIVE_STORE_DEFINITIONS)
       const tx = database.transaction(storeNames, 'readwrite')
       for (const storeName of storeNames) tx.objectStore(storeName).clear()
       await transactionDone(tx)

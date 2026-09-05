@@ -2,6 +2,10 @@ async function readJsonSafe(response) {
   return response.json().catch(() => ({}))
 }
 
+function safeSegment(value) {
+  return String(value).replace(/[^A-Za-z0-9._-]/g, '_')
+}
+
 export class DropboxArchiveRepository {
   constructor({ getAccessToken, fetchImpl = fetch }) {
     this.getAccessToken = getAccessToken
@@ -35,7 +39,19 @@ export class DropboxArchiveRepository {
     )
   }
 
-  async uploadJson(path, value) {
+  async ensureArchiveStructure() {
+    for (const path of [
+      '/Archive',
+      '/Archive/Conversations',
+      '/Archive/Markdown',
+      '/Archive/Attachments',
+      '/System',
+    ]) {
+      await this.ensureFolder(path)
+    }
+  }
+
+  async uploadText(path, text) {
     const accessToken = await this.getAccessToken()
     const response = await this.fetchImpl('https://content.dropboxapi.com/2/files/upload', {
       method: 'POST',
@@ -49,7 +65,7 @@ export class DropboxArchiveRepository {
         }),
         'content-type': 'application/octet-stream',
       },
-      body: JSON.stringify(value, null, 2),
+      body: text,
     })
 
     if (!response.ok) {
@@ -60,9 +76,69 @@ export class DropboxArchiveRepository {
     }
   }
 
+  async uploadJson(path, value) {
+    await this.uploadText(path, JSON.stringify(value, null, 2))
+  }
+
+  async downloadJson(path, { allowNotFound = false } = {}) {
+    const accessToken = await this.getAccessToken()
+    const response = await this.fetchImpl('https://content.dropboxapi.com/2/files/download', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Dropbox-API-Arg': JSON.stringify({ path }),
+      },
+    })
+
+    if (!response.ok) {
+      const payload = await readJsonSafe(response)
+      const summary = String(payload.error_summary ?? '')
+      if (allowNotFound && response.status === 409 && summary.startsWith('path/not_found/')) {
+        return null
+      }
+      throw new Error(summary || `Dropbox download failed (${response.status})`)
+    }
+
+    const text = await response.text()
+    try {
+      return JSON.parse(text)
+    } catch (error) {
+      throw new Error(`Dropbox file is not valid JSON: ${path}`)
+    }
+  }
+
+  async getArchiveIndex() {
+    const index = await this.downloadJson('/System/archive-index.json', { allowNotFound: true })
+    return index ?? { archiveIndexVersion: 1, conversations: {} }
+  }
+
   async saveInspectionReport(importId, report) {
     await this.ensureFolder('/System')
     await this.ensureFolder('/System/inspection')
     await this.uploadJson(`/System/inspection/${importId}.json`, report)
+  }
+
+  async saveConversationVersion(conversation) {
+    const conversationId = safeSegment(conversation.conversationId)
+    const fingerprint = safeSegment(conversation.fingerprint)
+    await this.uploadJson(
+      `/Archive/Conversations/${conversationId}--${fingerprint}.json`,
+      conversation.source,
+    )
+    await this.uploadText(
+      `/Archive/Markdown/${conversationId}--${fingerprint}.md`,
+      conversation.markdown,
+    )
+  }
+
+  async saveAttachmentMetadata(value) {
+    await this.ensureFolder('/Archive')
+    await this.ensureFolder('/Archive/Attachments')
+    await this.uploadJson('/Archive/Attachments/index.json', value)
+  }
+
+  async saveArchiveIndex(index) {
+    await this.ensureFolder('/System')
+    await this.uploadJson('/System/archive-index.json', index)
   }
 }

@@ -5,6 +5,9 @@ import {
   makeInspectionId,
   safeReportFilename,
   progressFromInspectorEvent,
+  makeImportId,
+  progressFromParseEvent,
+  progressFromCommitEvent,
   tokenIsUsable,
 } from '../src/appLogic.js'
 
@@ -41,4 +44,26 @@ test('tokenIsUsable treats expired browser tokens as disconnected', () => {
   assert.equal(tokenIsUsable({ accessToken: 'x', expiresAt: 70000 }, 1000), true)
   assert.equal(tokenIsUsable({ accessToken: 'x', expiresAt: 60000 }, 1000), false)
   assert.equal(tokenIsUsable({ accessToken: 'x', expiresAt: null }, 1000), true)
+})
+
+
+test('import IDs are deterministic from parsedAt', () => {
+  assert.equal(
+    makeImportId({ parsedAt: '2026-09-05T02:03:04.005Z' }),
+    'import-20260905T020304005Z',
+  )
+})
+
+test('parse and commit progress map to user-facing stages', () => {
+  assert.deepEqual(progressFromParseEvent({ stage: 'conversations', completed: 2, total: 8, detail: 'conversations-001.json' }), {
+    label: 'Reading conversations…',
+    detail: '2 of 8 conversation files · conversations-001.json',
+    percent: 25,
+  })
+  assert.deepEqual(progressFromCommitEvent({ stage: 'conversations', completed: 3, total: 6 }), {
+    label: 'Saving changed conversations…',
+    detail: '3 of 6 saved',
+    percent: 50,
+  })
+  assert.equal(progressFromCommitEvent({ stage: 'commit', completed: 0, total: 1 }).label, 'Committing archive index…')
 })

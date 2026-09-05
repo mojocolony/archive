@@ -52,3 +52,91 @@ test('treats an existing Dropbox folder as success', async () => {
 
   await assert.doesNotReject(() => repo.ensureFolder('/System'))
 })
+
+test('getArchiveIndex returns an empty archive when Dropbox index is missing', async () => {
+  const fakeFetch = async (url) => {
+    assert.equal(url, 'https://content.dropboxapi.com/2/files/download')
+    return new Response(JSON.stringify({ error_summary: 'path/not_found/..' }), {
+      status: 409,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'access-token',
+    fetchImpl: fakeFetch,
+  })
+  assert.deepEqual(await repo.getArchiveIndex(), {
+    archiveIndexVersion: 1,
+    conversations: {},
+  })
+})
+
+test('getArchiveIndex downloads and parses the committed Dropbox index', async () => {
+  const fakeFetch = async (url, options) => {
+    assert.equal(url, 'https://content.dropboxapi.com/2/files/download')
+    assert.deepEqual(JSON.parse(options.headers['Dropbox-API-Arg']), {
+      path: '/System/archive-index.json',
+    })
+    return new Response(JSON.stringify({
+      archiveIndexVersion: 1,
+      conversations: { c1: { conversationId: 'c1' } },
+    }), { status: 200 })
+  }
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'access-token',
+    fetchImpl: fakeFetch,
+  })
+  assert.equal((await repo.getArchiveIndex()).conversations.c1.conversationId, 'c1')
+})
+
+test('saveConversationVersion writes source JSON and Markdown to content-addressed paths', async () => {
+  const calls = []
+  const fakeFetch = async (url, options) => {
+    calls.push({ url, options })
+    return new Response('{}', { status: 200 })
+  }
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'token',
+    fetchImpl: fakeFetch,
+  })
+
+  await repo.saveConversationVersion({
+    conversationId: 'conv-1',
+    fingerprint: 'abc123',
+    source: { conversation_id: 'conv-1', title: 'Title' },
+    markdown: '# Title\n',
+  })
+
+  const uploadCalls = calls.filter(call => call.url.includes('/files/upload'))
+  assert.equal(uploadCalls.length, 2)
+  const paths = uploadCalls.map(call => JSON.parse(call.options.headers['Dropbox-API-Arg']).path).sort()
+  assert.deepEqual(paths, [
+    '/Archive/Conversations/conv-1--abc123.json',
+    '/Archive/Markdown/conv-1--abc123.md',
+  ])
+  assert.equal(uploadCalls.some(call => String(call.options.body).includes('conversation_id')), true)
+  assert.equal(uploadCalls.some(call => call.options.body === '# Title\n'), true)
+})
+
+test('saveAttachmentMetadata and saveArchiveIndex write their canonical files', async () => {
+  const calls = []
+  const fakeFetch = async (url, options) => {
+    calls.push({ url, options })
+    return new Response('{}', { status: 200 })
+  }
+  const repo = new DropboxArchiveRepository({
+    getAccessToken: async () => 'token',
+    fetchImpl: fakeFetch,
+  })
+
+  await repo.saveAttachmentMetadata({ attachments: [{ fileId: 'file-1' }], sourceAssetNameMap: {} })
+  await repo.saveArchiveIndex({ archiveIndexVersion: 1, conversations: {} })
+
+  const uploadPaths = calls
+    .filter(call => call.url.includes('/files/upload'))
+    .map(call => JSON.parse(call.options.headers['Dropbox-API-Arg']).path)
+  assert.deepEqual(uploadPaths, [
+    '/Archive/Attachments/index.json',
+    '/System/archive-index.json',
+  ])
+})

@@ -1,13 +1,15 @@
 import { openArchiveDb } from './local/db.js'
-import { inspectChatGptExport, sanitizeInspectionReport } from './import/inspector.js'
+import { parseChatGptExport } from './import/exportParser.js'
+import { buildImportPreview } from './import/importMerge.js'
+import { commitParsedExport } from './import/importService.js'
 import { DropboxSession } from './dropbox/session.js'
 import { DropboxArchiveRepository } from './dropbox/archiveRepository.js'
 import { getCapabilityReport, runIndexedDbSelfTest } from './features/selfCheck.js'
 import {
-  makeInspectionId,
-  progressFromInspectorEvent,
+  makeImportId,
+  progressFromCommitEvent,
+  progressFromParseEvent,
   routeFromHash,
-  safeReportFilename,
   tokenIsUsable,
 } from './appLogic.js'
 import {
@@ -15,16 +17,19 @@ import {
   renderAppShell,
   renderHomePage,
   renderImportPage,
-  renderInspectionReport,
+  renderImportPreview,
   renderSettingsPage,
 } from './ui.js'
 
-const VERSION = '0.1.1-inspector'
+const VERSION = '0.2.0'
 const root = document.getElementById('app')
 
 const state = {
   currentFile: null,
-  currentReport: null,
+  parsedExport: null,
+  importPreview: null,
+  previousIndex: null,
+  importResult: null,
   indexedDbWriteOk: null,
   settingsMessage: null,
 }
@@ -44,11 +49,27 @@ function createDropboxSession(appKey) {
   return new DropboxSession({ db, appKey })
 }
 
-async function latestInspection() {
+async function createDropboxRepository() {
+  const appKey = await getAppKey()
+  if (!appKey) throw new Error('Dropbox App Key is not configured')
+  const session = createDropboxSession(appKey)
+  return new DropboxArchiveRepository({
+    getAccessToken: () => session.getAccessToken(),
+  })
+}
+
+async function latestImportActivity() {
   const rows = await db.getAll('imports')
   return rows
-    .filter(row => row.status === 'inspected' || row.status === 'report-saved')
-    .sort((a, b) => String(b.inspectedAt).localeCompare(String(a.inspectedAt)))[0] ?? null
+    .sort((a, b) => String(b.importedAt ?? b.inspectedAt ?? '').localeCompare(String(a.importedAt ?? a.inspectedAt ?? '')))[0] ?? null
+}
+
+async function localArchiveIndex() {
+  const rows = await db.getAll('archiveIndex')
+  return {
+    archiveIndexVersion: 1,
+    conversations: Object.fromEntries(rows.map(row => [row.conversationId, row])),
+  }
 }
 
 function updateImportProgress(progress) {
@@ -58,7 +79,7 @@ function updateImportProgress(progress) {
     card.id = 'live-import-progress'
     card.className = 'progress-card'
     card.setAttribute('role', 'status')
-    const results = document.getElementById('inspection-results')
+    const results = document.getElementById('import-results')
     results?.parentNode?.insertBefore(card, results)
   }
 
@@ -90,137 +111,139 @@ function showPageNotice(message, isError = false) {
   header?.insertAdjacentElement('afterend', notice)
 }
 
-function downloadJson(report) {
-  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = safeReportFilename(report)
-  document.body.append(link)
-  link.click()
-  link.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
+function renderCurrentPreview(dropboxConnected) {
+  const results = document.getElementById('import-results')
+  if (!results || !state.parsedExport || !state.importPreview) return
+  results.innerHTML = renderImportPreview({
+    parsedExport: state.parsedExport,
+    preview: state.importPreview,
+    dropboxConnected,
+    importResult: state.importResult,
+  })
+  attachPreviewHandlers(dropboxConnected)
 }
 
-async function saveReportToDropbox(report) {
-  const appKey = await getAppKey()
-  if (!appKey) throw new Error('Dropbox App Key is not configured')
-  const session = createDropboxSession(appKey)
-  const repository = new DropboxArchiveRepository({
-    getAccessToken: () => session.getAccessToken(),
-  })
-  const id = makeInspectionId(report)
-  await repository.saveInspectionReport(id, report)
+function attachPreviewHandlers(dropboxConnected) {
+  const importButton = document.getElementById('import-to-dropbox')
+  const anomalyCheckbox = document.getElementById('confirm-anomaly')
 
-  await db.put('imports', {
-    id,
-    sourceFileName: report.sourceFileName,
-    sourceFileSize: report.sourceFileSize,
-    inspectedAt: report.inspectedAt,
-    entryCount: report.entryCount,
-    status: 'report-saved',
-    reportPath: `/System/inspection/${id}.json`,
-  })
-}
-
-function attachReportActions() {
-  const report = state.currentReport
-  if (!report) return
-
-  document.getElementById('download-report-button')?.addEventListener('click', () => {
-    downloadJson(report)
+  anomalyCheckbox?.addEventListener('change', () => {
+    if (importButton) importButton.disabled = !dropboxConnected || !anomalyCheckbox.checked
   })
 
-  document.getElementById('save-report-button')?.addEventListener('click', async event => {
-    const button = event.currentTarget
-    button.disabled = true
-    const originalText = button.textContent
-    button.textContent = 'Saving…'
+  importButton?.addEventListener('click', async () => {
+    if (!dropboxConnected || !state.parsedExport || !state.importPreview || !state.previousIndex) return
+    importButton.disabled = true
+    importButton.textContent = 'Importing…'
+    document.getElementById('live-import-progress')?.remove()
+
     try {
-      await saveReportToDropbox(report)
-      button.textContent = 'Saved to Dropbox'
-      showPageNotice('Safe inspection report saved to Dropbox.')
+      const repository = await createDropboxRepository()
+      const result = await commitParsedExport({
+        parsedExport: state.parsedExport,
+        previousIndex: state.previousIndex,
+        preview: state.importPreview,
+        repository,
+        db,
+        importId: makeImportId(state.parsedExport),
+        allowAnomaly: Boolean(anomalyCheckbox?.checked),
+        onProgress(event) {
+          updateImportProgress(progressFromCommitEvent(event))
+        },
+      })
+      state.importResult = result
+      state.previousIndex = result.index
+      document.getElementById('live-import-progress')?.remove()
+      renderCurrentPreview(true)
+      showPageNotice('Archive import committed to Dropbox.')
     } catch (error) {
-      button.disabled = false
-      button.textContent = originalText
+      document.getElementById('live-import-progress')?.remove()
+      importButton.disabled = false
+      importButton.textContent = 'Import Conversations to Dropbox'
       showPageNotice(error instanceof Error ? error.message : String(error), true)
     }
   })
 }
 
+function resetImportState({ keepFile = false } = {}) {
+  if (!keepFile) state.currentFile = null
+  state.parsedExport = null
+  state.importPreview = null
+  state.previousIndex = null
+  state.importResult = null
+}
+
 function attachImportHandlers(dropboxConnected) {
   const input = document.getElementById('chatgpt-export')
-  const inspectButton = document.getElementById('inspect-button')
+  const analyzeButton = document.getElementById('analyze-button')
   const clearButton = document.getElementById('clear-import-button')
   const detail = document.getElementById('file-picker-detail')
 
-  if (state.currentFile && input && inspectButton && detail) {
+  if (state.currentFile && analyzeButton && detail) {
     detail.textContent = `${state.currentFile.name} · ${formatBytes(state.currentFile.size)}`
-    inspectButton.disabled = false
+    analyzeButton.disabled = false
   }
 
   input?.addEventListener('change', () => {
     state.currentFile = input.files?.[0] ?? null
-    state.currentReport = null
+    resetImportState({ keepFile: true })
     if (detail) {
       detail.textContent = state.currentFile
         ? `${state.currentFile.name} · ${formatBytes(state.currentFile.size)}`
         : 'Choose the official ZIP downloaded from ChatGPT.'
     }
-    if (inspectButton) inspectButton.disabled = !state.currentFile
-    document.getElementById('inspection-results')?.replaceChildren()
+    if (analyzeButton) analyzeButton.disabled = !state.currentFile
+    document.getElementById('import-results')?.replaceChildren()
   })
 
   clearButton?.addEventListener('click', async () => {
-    state.currentFile = null
-    state.currentReport = null
+    resetImportState()
     await render()
   })
 
-  inspectButton?.addEventListener('click', async () => {
+  analyzeButton?.addEventListener('click', async () => {
     if (!state.currentFile) return
-    inspectButton.disabled = true
-    inspectButton.textContent = 'Inspecting…'
-    document.getElementById('inspection-results')?.replaceChildren()
+    analyzeButton.disabled = true
+    analyzeButton.textContent = 'Analyzing…'
+    state.parsedExport = null
+    state.importPreview = null
+    state.previousIndex = null
+    state.importResult = null
+    document.getElementById('import-results')?.replaceChildren()
     document.getElementById('live-import-progress')?.remove()
 
     try {
-      const localReport = await inspectChatGptExport(state.currentFile, {
+      const parsedExport = await parseChatGptExport(state.currentFile, {
         onProgress(event) {
-          updateImportProgress(progressFromInspectorEvent(event))
+          updateImportProgress(progressFromParseEvent(event))
         },
       })
-      const safeReport = sanitizeInspectionReport(localReport)
-      state.currentReport = safeReport
-      const id = makeInspectionId(safeReport)
 
-      await db.put('imports', {
-        id,
-        sourceFileName: safeReport.sourceFileName,
-        sourceFileSize: safeReport.sourceFileSize,
-        inspectedAt: safeReport.inspectedAt,
-        entryCount: safeReport.entryCount,
-        status: 'inspected',
-        reportPath: null,
-      })
+      let previousIndex
+      if (dropboxConnected) {
+        const repository = await createDropboxRepository()
+        previousIndex = await repository.getArchiveIndex()
+      } else {
+        previousIndex = await localArchiveIndex()
+      }
+
+      state.parsedExport = parsedExport
+      state.previousIndex = previousIndex
+      state.importPreview = buildImportPreview(parsedExport, previousIndex)
 
       document.getElementById('live-import-progress')?.remove()
-      const results = document.getElementById('inspection-results')
-      if (results) {
-        results.innerHTML = renderInspectionReport(safeReport, { dropboxConnected })
-      }
-      attachReportActions()
-      inspectButton.textContent = 'Inspect Again'
-      inspectButton.disabled = false
+      renderCurrentPreview(dropboxConnected)
+      analyzeButton.textContent = 'Analyze Again'
+      analyzeButton.disabled = false
     } catch (error) {
       document.getElementById('live-import-progress')?.remove()
-      inspectButton.textContent = 'Inspect Export'
-      inspectButton.disabled = false
+      analyzeButton.textContent = 'Analyze Export'
+      analyzeButton.disabled = false
       showPageNotice(error instanceof Error ? error.message : String(error), true)
     }
   })
 
-  attachReportActions()
+  attachPreviewHandlers(dropboxConnected)
 }
 
 function attachSettingsHandlers(appKey, dropboxConnected) {
@@ -289,17 +312,19 @@ function attachSettingsHandlers(appKey, dropboxConnected) {
 
 async function render() {
   const route = routeFromHash(location.hash)
-  const [appKey, dropboxConnected, lastInspection] = await Promise.all([
+  const [appKey, dropboxConnected, lastImport] = await Promise.all([
     getAppKey(),
     isDropboxConnected(),
-    latestInspection(),
+    latestImportActivity(),
   ])
 
   let content
   if (route === 'import') {
     content = renderImportPage({
       dropboxConnected,
-      report: state.currentReport,
+      parsedExport: state.parsedExport,
+      preview: state.importPreview,
+      importResult: state.importResult,
     })
   } else if (route === 'settings') {
     content = renderSettingsPage({
@@ -311,7 +336,7 @@ async function render() {
     })
     state.settingsMessage = null
   } else {
-    content = renderHomePage({ lastInspection, dropboxConnected })
+    content = renderHomePage({ lastInspection: lastImport, dropboxConnected })
   }
 
   root.innerHTML = renderAppShell({ route, content, version: VERSION })

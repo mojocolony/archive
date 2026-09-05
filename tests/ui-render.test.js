@@ -228,3 +228,62 @@ test('conversation rows expose a star action without hiding the conversation lin
   assert.match(html, /data-star-conversation="c1"/)
   assert.match(html, /Apps/)
 })
+
+
+test('conversation transcript renders safe basic Markdown instead of exposing raw syntax', () => {
+  const html = renderConversationPage({ document: {
+    conversationId: 'c-md', title: 'Markdown', updateTime: 20,
+    messages: [{
+      messageId: 'm1', role: 'assistant', createTime: 10,
+      text: '# Heading\n\n**Bold** and *italic* with `code`.\n\n- One\n- Two\n\n[OpenAI](https://openai.com)\n\n```js\nconst x = 1 < 2\n```',
+    }],
+  } })
+  assert.match(html, /<h1>Heading<\/h1>/)
+  assert.match(html, /<strong>Bold<\/strong>/)
+  assert.match(html, /<em>italic<\/em>/)
+  assert.match(html, /<code>code<\/code>/)
+  assert.match(html, /<ul>[\s\S]*<li>One<\/li>[\s\S]*<li>Two<\/li>[\s\S]*<\/ul>/)
+  assert.match(html, /<a href="https:\/\/openai\.com" target="_blank" rel="noopener noreferrer">OpenAI<\/a>/)
+  assert.match(html, /<pre><code class="language-js">const x = 1 &lt; 2<\/code><\/pre>/)
+  assert.doesNotMatch(html, /\*\*Bold\*\*/)
+})
+
+test('conversation transcript strips internal ChatGPT citation tokens', () => {
+  const html = renderConversationPage({ document: {
+    conversationId: 'c-cite', title: 'Citations', updateTime: 20,
+    messages: [{
+      messageId: 'm1', role: 'assistant', createTime: 10,
+      text: 'Roku is good. citeturn733727search3 More text. citeturn733727search0',
+    }],
+  } })
+  assert.match(html, /Roku is good\./)
+  assert.match(html, /More text\./)
+  assert.doesNotMatch(html, /turn733727search/)
+  assert.doesNotMatch(html, /cite/)
+})
+
+test('conversation transcript escapes raw HTML and does not create unsafe Markdown links', () => {
+  const html = renderConversationPage({ document: {
+    conversationId: 'c-safe', title: 'Safety', updateTime: 20,
+    messages: [{
+      messageId: 'm1', role: 'assistant', createTime: 10,
+      text: '<img src=x onerror=alert(1)> [bad](javascript:alert(1))',
+    }],
+  } })
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/)
+  assert.doesNotMatch(html, /<img/)
+  assert.doesNotMatch(html, /href="javascript:/)
+})
+
+test('search excerpts hide internal ChatGPT citation tokens', () => {
+  const html = renderHomePage({
+    lastInspection: { status: 'imported', importedAt: '2026-09-05T02:00:00.000Z', conversationCount: 1 },
+    dropboxConnected: true,
+    searchStatus: { state: 'current', indexedCount: 1, total: 1, builtAt: '2026-09-05T03:00:00.000Z' },
+    searchQuery: 'Roku',
+    searchResults: [{ conversationId: 'c1', title: 'Roku', updateTime: 10, excerpts: [{ messageId: 'm1', role: 'assistant', text: 'Roku citeturn1search2 works.' }] }],
+  })
+  assert.match(html, /Roku/)
+  assert.match(html, /works\./)
+  assert.doesNotMatch(html, /turn1search2/)
+})

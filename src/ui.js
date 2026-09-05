@@ -7,6 +7,132 @@ export function escapeHtml(value) {
     .replaceAll("'", '&#039;')
 }
 
+export function stripInternalReferenceTokens(value) {
+  return String(value ?? '')
+    .replace(/(?:cite|filecite)[^]*/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+}
+
+function safeMarkdownHref(value) {
+  const href = String(value ?? '').trim()
+  try {
+    const url = new URL(href)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? href : null
+  } catch {
+    return null
+  }
+}
+
+function renderInlineMarkdown(value) {
+  let source = String(value ?? '')
+  const protectedFragments = []
+  const protect = html => {
+    const token = `ARCHIVEFRAGMENT${protectedFragments.length}TOKEN`
+    protectedFragments.push(html)
+    return token
+  }
+
+  source = source.replace(/`([^`\n]+)`/g, (_, code) => protect(`<code>${escapeHtml(code)}</code>`))
+  source = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (match, label, href) => {
+    const safeHref = safeMarkdownHref(href)
+    if (!safeHref) return match
+    return protect(`<a href="${escapeHtml(safeHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`)
+  })
+
+  let html = escapeHtml(source)
+  html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/__([^_\n]+)__/g, '<strong>$1</strong>')
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+  html = html.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>')
+
+  protectedFragments.forEach((fragment, index) => {
+    html = html.replaceAll(`ARCHIVEFRAGMENT${index}TOKEN`, fragment)
+  })
+  return html
+}
+
+export function renderTranscriptMarkdown(value) {
+  const source = stripInternalReferenceTokens(value).replace(/\r\n?/g, '\n')
+  const lines = source.split('\n')
+  const blocks = []
+  let paragraph = []
+  let index = 0
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    blocks.push(`<p>${paragraph.map(renderInlineMarkdown).join('<br>')}</p>`)
+    paragraph = []
+  }
+
+  while (index < lines.length) {
+    const line = lines[index]
+    const fence = line.match(/^```\s*([A-Za-z0-9_-]*)\s*$/)
+    if (fence) {
+      flushParagraph()
+      const language = fence[1] || ''
+      const codeLines = []
+      index += 1
+      while (index < lines.length && !/^```\s*$/.test(lines[index])) {
+        codeLines.push(lines[index])
+        index += 1
+      }
+      if (index < lines.length) index += 1
+      const className = language ? ` class="language-${escapeHtml(language)}"` : ''
+      blocks.push(`<pre><code${className}>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
+      continue
+    }
+
+    if (!line.trim()) {
+      flushParagraph()
+      index += 1
+      continue
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.+)$/)
+    if (heading) {
+      flushParagraph()
+      const level = heading[1].length
+      blocks.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`)
+      index += 1
+      continue
+    }
+
+    const unordered = line.match(/^\s*[-+*]\s+(.+)$/)
+    if (unordered) {
+      flushParagraph()
+      const items = []
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*[-+*]\s+(.+)$/)
+        if (!match) break
+        items.push(`<li>${renderInlineMarkdown(match[1])}</li>`)
+        index += 1
+      }
+      blocks.push(`<ul>${items.join('')}</ul>`)
+      continue
+    }
+
+    const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/)
+    if (ordered) {
+      flushParagraph()
+      const items = []
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*\d+[.)]\s+(.+)$/)
+        if (!match) break
+        items.push(`<li>${renderInlineMarkdown(match[1])}</li>`)
+        index += 1
+      }
+      blocks.push(`<ol>${items.join('')}</ol>`)
+      continue
+    }
+
+    paragraph.push(line)
+    index += 1
+  }
+
+  flushParagraph()
+  return blocks.join('')
+}
+
 export function formatBytes(bytes) {
   const value = Number(bytes ?? 0)
   if (!Number.isFinite(value) || value <= 0) return '0 B'
@@ -79,7 +205,7 @@ function renderResultRow(result, query = '') {
   const excerpts = (result.excerpts ?? []).map(excerpt => `
     <div class="search-excerpt">
       <span class="excerpt-role">${excerpt.role === 'user' ? 'You' : 'ChatGPT'}</span>
-      <span>${escapeHtml(excerpt.text)}</span>
+      <span>${escapeHtml(stripInternalReferenceTokens(excerpt.text))}</span>
     </div>
   `).join('')
   const labels = resultMeta(result)
@@ -298,8 +424,8 @@ export function renderImportPreview({ parsedExport, preview, dropboxConnected, i
       ${anomaly ? `<div class="notice error"><strong>Import warning.</strong> ${escapeHtml(anomaly)}<label class="confirm-row"><input id="confirm-anomaly" type="checkbox"> I reviewed this warning and want to commit the export without deleting the missing conversations.</label></div>` : ''}
 
       <div class="notice">
-        <strong>v0.3.1 scope.</strong>
-        Conversation source JSON, readable Markdown, and attachment metadata are imported now. Binary attachments and latest/previous source-ZIP retention come in the next v0.2.x step.
+        <strong>Current import scope.</strong>
+        Conversation source JSON, readable Markdown, and attachment metadata are imported now. Binary attachments and latest/previous source-ZIP retention remain future work.
       </div>
 
       <div class="button-row">
@@ -383,7 +509,7 @@ export function renderConversationPage({ document, query = '', messageId = '' })
 
   const messages = (document.messages ?? []).map(message => {
     const hit = messageId && message.messageId === messageId
-    const text = escapeHtml(message.text).replaceAll('\n', '<br>')
+    const text = renderTranscriptMarkdown(message.text)
     return `
       <article class="transcript-message ${message.role === 'user' ? 'from-user' : 'from-assistant'}${hit ? ' is-search-hit' : ''}" id="message-${escapeHtml(message.messageId)}">
         <div class="message-meta">

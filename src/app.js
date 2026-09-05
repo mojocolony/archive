@@ -19,7 +19,7 @@ import {
   renderSettingsPage,
 } from './ui.js'
 
-const VERSION = '0.1.0-inspector'
+const VERSION = '0.1.1-inspector'
 const root = document.getElementById('app')
 
 const state = {

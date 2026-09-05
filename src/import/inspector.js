@@ -1,4 +1,5 @@
 import { summarizeJsonPrefix } from './jsonShape.js'
+import { summarizeFirstValueSchema } from './deepJsonShape.js'
 import { readEntryTextPrefix, readZipDirectory } from './zipDirectory.js'
 
 const DEFAULT_JSON_PREFIX_BYTES = 2 * 1024 * 1024
@@ -32,6 +33,7 @@ export async function inspectChatGptExport(file, options = {}) {
     const entry = directory[index]
     const category = categoryForPath(entry.path)
     let jsonShape = null
+    let deepSchema = null
     let inspectionError = null
 
     // Only inspect top-level JSON. Nested JSON may be a user attachment.
@@ -39,6 +41,7 @@ export async function inspectChatGptExport(file, options = {}) {
       try {
         const prefix = await readEntryTextPrefix(file, entry, jsonPrefixBytes)
         jsonShape = summarizeJsonPrefix(prefix)
+        deepSchema = summarizeFirstValueSchema(prefix, { maxDepth: 8 })
       } catch (error) {
         inspectionError = error instanceof Error ? error.message : String(error)
       }
@@ -52,6 +55,7 @@ export async function inspectChatGptExport(file, options = {}) {
       compressionMethod: entry.compressionMethod,
       encrypted: entry.encrypted,
       jsonShape,
+      deepSchema,
       inspectionError,
     })
 
@@ -59,7 +63,7 @@ export async function inspectChatGptExport(file, options = {}) {
   }
 
   return {
-    inspectionVersion: 1,
+    inspectionVersion: 2,
     sourceFileName: file.name || 'export.zip',
     sourceFileSize: file.size,
     inspectedAt: now(),
@@ -82,7 +86,11 @@ export function sanitizeInspectionReport(report) {
       originalSize: entry.originalSize,
       compressionMethod: entry.compressionMethod,
       encrypted: entry.encrypted,
-      jsonShape: entry.jsonShape,
+      jsonShape:
+        entry.deepSchema?.schema?.dynamicMap === true
+          ? { ...entry.jsonShape, topLevelKeys: ['<dynamic-key>'] }
+          : entry.jsonShape,
+      deepSchema: entry.deepSchema,
       inspectionError: entry.inspectionError,
     }))
 

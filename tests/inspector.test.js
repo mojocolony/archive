@@ -24,6 +24,14 @@ test('inspects structural JSON keys without retaining JSON values', async () => 
     'title',
   ])
 
+  assert.equal(conversations.deepSchema.rootType, 'array')
+  assert.deepEqual(conversations.deepSchema.schema.keys, [
+    'create_time',
+    'id',
+    'mapping',
+    'title',
+  ])
+
   const serialized = JSON.stringify(report)
   assert.equal(serialized.includes('private@example.invalid'), false)
   assert.equal(serialized.includes('conv-1'), false)
@@ -38,6 +46,7 @@ test('sanitized report keeps structural file names but summarizes asset paths', 
 
   assert.equal(safe.entries.some(entry => entry.path === 'conversations.json'), true)
   assert.equal(safe.entries.some(entry => entry.path === 'user.json'), true)
+  assert.equal(safe.inspectionVersion, 2)
   assert.equal(JSON.stringify(safe).includes('files/image.png'), false)
   assert.deepEqual(safe.assetSummary, [
     { extension: '.png', count: 1, totalOriginalBytes: 15 },

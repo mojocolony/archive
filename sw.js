@@ -1,4 +1,4 @@
-const CACHE_NAME = 'archive-shell-v0.1.0'
+const CACHE_NAME = 'archive-shell-v0.1.1'
 const APP_SHELL = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ const APP_SHELL = [
   './src/features/selfCheck.js',
   './src/import/inspector.js',
   './src/import/jsonShape.js',
+  './src/import/deepJsonShape.js',
   './src/import/zipDirectory.js',
   './src/dropbox/auth.js',
   './src/dropbox/session.js',

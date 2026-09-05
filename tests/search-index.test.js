@@ -117,3 +117,26 @@ test('searchDocuments does not let a shorter indexed word satisfy a more specifi
 
   assert.equal(searchDocuments([document], 'Podstream').length, 0)
 })
+
+
+test('searchDocuments uses fuzzy matching only when strict matching finds no results', () => {
+  const exact = buildSearchDocument(
+    indexEntry({ conversationId: 'exact', title: 'Podstream app' }),
+    sourceConversation({ title: 'Podstream app', user: 'Work on Podstream playback', assistant: 'Okay.' }),
+  )
+  const fuzzyOnly = buildSearchDocument(
+    indexEntry({ conversationId: 'fuzzy', title: 'Roadstream notes' }),
+    sourceConversation({ title: 'Roadstream notes', user: 'Discuss roadstream routing', assistant: 'Okay.' }),
+  )
+
+  assert.deepEqual(searchDocuments([fuzzyOnly, exact], 'Podstream').map(result => result.conversationId), ['exact'])
+})
+
+test('searchDocuments still uses fuzzy matching as a fallback for a likely typo', () => {
+  const document = buildSearchDocument(
+    indexEntry({ conversationId: 'podstream', title: 'Podstream app' }),
+    sourceConversation({ title: 'Podstream app', user: 'Work on Podstream playback', assistant: 'Okay.' }),
+  )
+
+  assert.deepEqual(searchDocuments([document], 'Podstreem').map(result => result.conversationId), ['podstream'])
+})

@@ -1,10 +1,12 @@
-# Archive — v0.2.5 Search Accuracy Fix
+# Archive — v0.2.6 Search Precision Fix
 
 Archive is a privacy-first PWA for searching, organizing, and preserving ChatGPT history. The canonical conversation archive lives in Dropbox; the full-text search index is disposable local data that stays on the device.
 
-## What v0.2.5 changes
+## What v0.2.6 changes
 
-- Search accuracy fix: a shorter indexed word can no longer satisfy a more specific query. For example, `stream` no longer makes a conversation match `Podstream`.
+- Search precision fix: Archive now returns strict exact/partial matches first and uses fuzzy typo matching only when no strict results exist.
+- A search for `Podstream` therefore returns conversations that actually contain `Podstream` (or a longer word containing it), rather than adding merely similar words.
+- Typo tolerance remains available as a fallback, so `Podstreem` can still find `Podstream` when there are no strict matches.
 - Partial-word search remains one-way, so queries such as `architec` still match `architecture`.
 - The existing local search index does not need to be rebuilt for this change.
 
@@ -61,7 +63,7 @@ If an index build fails, Archive does not mark the partial index current.
 
 1. Upload the **contents of this folder** to the root of the `Archive` repository.
 2. Wait for GitHub Pages to finish deploying.
-3. Open Archive and confirm **v0.2.5** in the lower-left corner.
+3. Open Archive and confirm **v0.2.6** in the lower-left corner.
 4. Home should show the committed conversation count.
 5. Select **Build Local Search Index** and leave the tab open for the first build.
 6. When indexing completes, use the Home search box or **All Conversations**.
@@ -95,7 +97,7 @@ System/
 
 ## Local IndexedDB
 
-The v0.2.5 database schema includes disposable stores for:
+The v0.2.6 database schema includes disposable stores for:
 
 - `searchDocuments`
 - `searchMeta`

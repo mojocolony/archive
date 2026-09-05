@@ -44,24 +44,25 @@ function fuzzyLimit(term) {
   return 0
 }
 
-function tokenMatchesTerm(token, term) {
+function tokenMatchesTerm(token, term, { allowFuzzy = true } = {}) {
   if (!term) return true
   if (token.includes(term)) return true
+  if (!allowFuzzy) return false
   const limit = fuzzyLimit(term)
   return limit > 0 && levenshteinDistance(token, term, limit) <= limit
 }
 
-function textMatchesTerm(text, term) {
+function textMatchesTerm(text, term, { allowFuzzy = true } = {}) {
   const normalizedText = normalize(text)
   if (normalizedText.includes(term)) return true
-  return wordTokens(normalizedText).some(token => tokenMatchesTerm(token, term))
+  return wordTokens(normalizedText).some(token => tokenMatchesTerm(token, term, { allowFuzzy }))
 }
 
 function textMatchesPhrase(text, phrase) {
   return normalize(text).includes(phrase)
 }
 
-function scoreField(text, query, weight) {
+function scoreField(text, query, weight, { allowFuzzy = true } = {}) {
   let score = 0
   const normalizedText = normalize(text)
   for (const phrase of query.phrases) {
@@ -69,21 +70,21 @@ function scoreField(text, query, weight) {
   }
   for (const term of query.terms) {
     if (normalizedText.includes(term)) score += weight * 2
-    else if (wordTokens(normalizedText).some(token => tokenMatchesTerm(token, term))) score += weight
+    else if (wordTokens(normalizedText).some(token => tokenMatchesTerm(token, term, { allowFuzzy }))) score += weight
   }
   return score
 }
 
-function unitMatchesDocument(document, unit, kind) {
+function unitMatchesDocument(document, unit, kind, { allowFuzzy = true } = {}) {
   if (kind === 'phrase') {
     if (textMatchesPhrase(document.title, unit)) return true
     return document.messages.some(message => textMatchesPhrase(message.text, unit))
   }
-  if (textMatchesTerm(document.title, unit)) return true
-  return document.messages.some(message => textMatchesTerm(message.text, unit))
+  if (textMatchesTerm(document.title, unit, { allowFuzzy })) return true
+  return document.messages.some(message => textMatchesTerm(message.text, unit, { allowFuzzy }))
 }
 
-function matchingExcerpts(document, query) {
+function matchingExcerpts(document, query, { allowFuzzy = true } = {}) {
   const candidates = []
   for (const message of document.messages) {
     let score = 0
@@ -91,7 +92,7 @@ function matchingExcerpts(document, query) {
       if (textMatchesPhrase(message.text, phrase)) score += message.role === 'user' ? 60 : 40
     }
     for (const term of query.terms) {
-      if (textMatchesTerm(message.text, term)) score += message.role === 'user' ? 25 : 15
+      if (textMatchesTerm(message.text, term, { allowFuzzy })) score += message.role === 'user' ? 25 : 15
     }
     if (score > 0) candidates.push({ ...message, score })
   }
@@ -145,31 +146,37 @@ export function searchDocuments(documents, value, { limit = 100 } = {}) {
   const query = parseSearchQuery(value)
   if (!query.raw || (query.phrases.length === 0 && query.terms.length === 0)) return []
 
-  const results = []
-  for (const document of documents ?? []) {
-    const allPhrasesMatch = query.phrases.every(phrase => unitMatchesDocument(document, phrase, 'phrase'))
-    const allTermsMatch = query.terms.every(term => unitMatchesDocument(document, term, 'term'))
-    if (!allPhrasesMatch || !allTermsMatch) continue
+  function collectResults({ allowFuzzy }) {
+    const results = []
+    for (const document of documents ?? []) {
+      const allPhrasesMatch = query.phrases.every(phrase => unitMatchesDocument(document, phrase, 'phrase', { allowFuzzy }))
+      const allTermsMatch = query.terms.every(term => unitMatchesDocument(document, term, 'term', { allowFuzzy }))
+      if (!allPhrasesMatch || !allTermsMatch) continue
 
-    let score = scoreField(document.title, query, 100)
-    for (const message of document.messages) {
-      score += scoreField(message.text, query, message.role === 'user' ? 30 : 20)
+      let score = scoreField(document.title, query, 100, { allowFuzzy })
+      for (const message of document.messages) {
+        score += scoreField(message.text, query, message.role === 'user' ? 30 : 20, { allowFuzzy })
+      }
+
+      results.push({
+        conversationId: document.conversationId,
+        title: document.title,
+        createTime: document.createTime,
+        updateTime: document.updateTime,
+        isArchived: document.isArchived,
+        isStarred: document.isStarred,
+        presentInLatestExport: document.presentInLatestExport,
+        score,
+        excerpts: matchingExcerpts(document, query, { allowFuzzy }),
+      })
     }
 
-    results.push({
-      conversationId: document.conversationId,
-      title: document.title,
-      createTime: document.createTime,
-      updateTime: document.updateTime,
-      isArchived: document.isArchived,
-      isStarred: document.isStarred,
-      presentInLatestExport: document.presentInLatestExport,
-      score,
-      excerpts: matchingExcerpts(document, query),
-    })
+    return results
+      .sort((a, b) => b.score - a.score || Number(b.updateTime ?? 0) - Number(a.updateTime ?? 0) || a.title.localeCompare(b.title))
+      .slice(0, limit)
   }
 
-  return results
-    .sort((a, b) => b.score - a.score || Number(b.updateTime ?? 0) - Number(a.updateTime ?? 0) || a.title.localeCompare(b.title))
-    .slice(0, limit)
+  const strictResults = collectResults({ allowFuzzy: false })
+  if (strictResults.length > 0) return strictResults
+  return collectResults({ allowFuzzy: true })
 }

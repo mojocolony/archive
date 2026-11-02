@@ -1,31 +1,21 @@
-# Archive — v0.3.3 Transcript Cleanup Fix
+# Archive — v0.3.4 Dropbox Recovery Fix
 
 Archive is a privacy-first local/Dropbox dashboard for ChatGPT exports.
 
-## What v0.3.3 changes
+## What's new
 
-Archived transcripts and search excerpts now remove standalone ChatGPT memory-citation markers such as `memcite`, in addition to the `cite` and `filecite` wrappers already cleaned up in v0.3.2. These are display-only changes; the canonical archived source remains untouched.
+- Automatically checks the canonical Dropbox archive index when connected at startup.
+- Restores a missing local conversation catalogue and import status from `/System/archive-index.json`, then rebuilds the disposable browser search index from archived conversation sources.
+- Provides a **Restore from Dropbox** button in Settings to retry recovery manually.
+- If the connected Dropbox app contains no index, or its index is invalid, Archive preserves the existing local catalogue and reports the problem rather than treating it as a new export.
+- Recovery reads Dropbox data; it does not overwrite, reimport, or delete any Dropbox files. Archive-owned stars and tags remain in `/System/conversation-metadata.json` and are loaded separately.
 
-Plain HTTP/HTTPS URLs written directly into a conversation are now made clickable in the transcript view, including long product links. Sentence punctuation after a URL remains outside the link. Existing Markdown links continue to open in a new tab, and unsafe URL schemes are not converted into clickable links.
+Automatic reindexing can take time for large archives. Progress is displayed in the app. If building local search fails, the recovered catalogue is retained and search can be retried from Home.
 
-## Existing v0.3.x organization features
+## Existing features
 
-- Archive-owned stars, separate from ChatGPT-exported starred state.
-- Multiple Archive tags per conversation.
-- Optimistic tag/star updates with background Dropbox synchronization.
-- Starred and Tags sidebar views.
-- Tags included in the local search index.
-- Canonical Archive organization metadata stored separately in Dropbox at `/System/conversation-metadata.json`.
-- **Open in ChatGPT ↗** opens the source conversation in a new tab using the exported conversation ID.
+Archive-owned stars, multiple tags, transcript cleanup, clickable URLs, and Open in ChatGPT remain unchanged. Binary attachment uploading and source ZIP retention remain future work.
 
-## Important scope notes
+## Deployment
 
-Archive still treats the committed Dropbox conversation archive as canonical evidence. Transcript cleanup changes only how archived text is displayed; it does not rewrite the archived source data.
-
-Binary attachment upload and latest/previous source-export ZIP retention remain future work.
-
-## Deploy
-
-Upload the contents of the `Archive-v0.3.3-Transcript-Cleanup-Fix` folder to the root of the `mojocolony/archive` GitHub repository and let GitHub Pages deploy normally. Open Archive and confirm **v0.3.3** in the lower-left corner.
-
-No search-index rebuild is required for this update.
+GitHub Pages serves this repository's main branch. Confirm **v0.3.4** in the app footer after deployment. You do not need to import another ChatGPT export.

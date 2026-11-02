@@ -4,6 +4,7 @@ import { buildImportPreview } from './import/importMerge.js'
 import { commitParsedExport } from './import/importService.js'
 import { DropboxSession } from './dropbox/session.js'
 import { DropboxArchiveRepository } from './dropbox/archiveRepository.js'
+import { restoreArchiveCatalogue } from './sync/restoreService.js'
 import { getCapabilityReport, runIndexedDbSelfTest } from './features/selfCheck.js'
 import { buildLocalSearchIndex, getLocalSearchStatus } from './search/indexService.js'
 import { searchDocuments } from './search/searchIndex.js'
@@ -28,7 +29,7 @@ import {
   renderTagsPage,
 } from './ui.js'
 
-const VERSION = '0.3.3'
+const VERSION = '0.3.4'
 const root = document.getElementById('app')
 
 const state = {
@@ -118,7 +119,7 @@ function updateSearchProgress(progress) {
     card.id = 'live-search-progress'
     card.className = 'progress-card search-progress-card'
     card.setAttribute('role', 'status')
-    const anchor = document.getElementById('search-index-progress-anchor')
+    const anchor = document.getElementById('search-index-progress-anchor') ?? document.querySelector('.page-header')
     anchor?.insertAdjacentElement('afterend', card)
   }
 
@@ -406,6 +407,50 @@ function attachHomeHandlers({ dropboxConnected, archiveIndex }) {
   }
 }
 
+// Dropbox is authoritative; recover disposable browser records after a cleared
+// database, a different origin, or first connection on a new device.
+async function restoreExistingArchive() {
+  const repository = await createDropboxRepository()
+  const result = await restoreArchiveCatalogue({ repository, db })
+
+  if (result.status === 'missing') {
+    showPageNotice('No committed archive index was found for this Dropbox App Key. No local data was changed. Verify the key belongs to the Dropbox app containing /System/archive-index.json.', true)
+    return result
+  }
+  if (result.status === 'current') return result
+
+  await render()
+  const archiveIndex = await localArchiveIndex(await latestImportActivity())
+  const searchStatus = await getLocalSearchStatus({ archiveIndex, db })
+  if (searchStatus.state === 'current') {
+    showPageNotice(`Recovered ${result.conversationCount} conversations from Dropbox. Existing local search is ready.`)
+    return result
+  }
+
+  const button = document.getElementById('build-search-index')
+  if (button) {
+    button.disabled = true
+    button.textContent = 'Rebuilding…'
+  }
+  try {
+    await buildLocalSearchIndex({
+      archiveIndex,
+      repository,
+      db,
+      onProgress(event) { updateSearchProgress(progressFromSearchIndexEvent(event)) },
+    })
+    document.getElementById('live-search-progress')?.remove()
+    await render()
+    showPageNotice(`Recovered ${result.conversationCount} conversations from Dropbox and rebuilt local search.`)
+  } catch (error) {
+    document.getElementById('live-search-progress')?.remove()
+    await render()
+    const detail = error instanceof Error ? error.message : String(error)
+    showPageNotice(`Recovered ${result.conversationCount} conversations, but local search could not be rebuilt: ${detail}. Retry from the home page.`, true)
+  }
+  return result
+}
+
 function attachConversationHandlers(routeInfo) {
   if (!routeInfo?.messageId) return
   requestAnimationFrame(() => {
@@ -418,6 +463,7 @@ function attachSettingsHandlers(appKey, dropboxConnected) {
   const saveButton = document.getElementById('save-dropbox-key')
   const connectButton = document.getElementById('connect-dropbox')
   const disconnectButton = document.getElementById('disconnect-dropbox')
+  const restoreButton = document.getElementById('restore-from-dropbox')
   const selfCheckButton = document.getElementById('self-check-button')
 
   input?.addEventListener('input', () => {
@@ -450,6 +496,21 @@ function attachSettingsHandlers(appKey, dropboxConnected) {
       location.assign(url)
     } catch (error) {
       showPageNotice(error instanceof Error ? error.message : String(error), true)
+    }
+  })
+
+  restoreButton?.addEventListener('click', async () => {
+    if (!await isDropboxConnected()) return
+    restoreButton.disabled = true
+    restoreButton.textContent = 'Restoring…'
+    try {
+      const result = await restoreExistingArchive()
+      if (result.status === 'current') showPageNotice(`Dropbox catalogue is already current (${result.conversationCount} conversations).`)
+    } catch (error) {
+      showPageNotice(`Dropbox restoration failed: ${error instanceof Error ? error.message : String(error)}`, true)
+    } finally {
+      const button = document.getElementById('restore-from-dropbox')
+      if (button) { button.disabled = false; button.textContent = 'Restore from Dropbox' }
     }
   })
 
@@ -582,6 +643,13 @@ async function start() {
     await completeDropboxCallbackIfPresent()
     addEventListener('hashchange', () => render().catch(console.error))
     await render()
+    if (await isDropboxConnected()) {
+      try {
+        await restoreExistingArchive()
+      } catch (error) {
+        showPageNotice(`Dropbox restoration check failed: ${error instanceof Error ? error.message : String(error)}. Your existing data was not deleted.`, true)
+      }
+    }
   } catch (error) {
     root.innerHTML = `
       <main class="fatal-error">

@@ -661,6 +661,7 @@ export function renderSettingsPage({
           <div class="button-row">
             <button class="button primary" id="save-dropbox-key" type="button">Save App Key</button>
             <button class="button secondary" id="connect-dropbox" type="button" ${appKey ? '' : 'disabled'}>${dropboxConnected ? 'Reconnect Dropbox' : 'Connect Dropbox'}</button>
+            <button class="button secondary" id="restore-from-dropbox" type="button" ${dropboxConnected ? '' : 'disabled'}>Restore from Dropbox</button>
             <button class="button quiet" id="disconnect-dropbox" type="button" ${dropboxConnected ? '' : 'disabled'}>Disconnect</button>
           </div>
         </article>

@@ -188,3 +188,37 @@ test('commitParsedExport names the conversation when retries are exhausted', asy
     db: { clear: async () => {}, put: async () => {} },
   }), /New.*new.*timed out/i)
 })
+
+test('waits for in-flight uploads after an error and never commits the master index', async () => {
+  let secondUploadFinished = false
+  let indexSaved = false
+  const conversations = [
+    { conversationId: 'a', fingerprint: '1', title: 'A', source: {}, markdown: '' },
+    { conversationId: 'b', fingerprint: '2', title: 'B', source: {}, markdown: '' },
+  ]
+  const repo = {
+    ensureArchiveStructure: async () => {},
+    getExistingConversationVersions: async () => new Set(),
+    saveConversationVersion: async conversation => {
+      if (conversation.conversationId === 'a') {
+        await new Promise(resolve => setTimeout(resolve, 5))
+        throw new Error('429 exhausted')
+      }
+      await new Promise(resolve => setTimeout(resolve, 25))
+      secondUploadFinished = true
+    },
+    saveAttachmentMetadata: async () => {},
+    saveArchiveIndex: async () => { indexSaved = true },
+  }
+
+  await assert.rejects(() => commitParsedExport({
+    parsedExport: { sourceFileName: 'export.zip', conversations, attachments: [] },
+    previousIndex: { conversations: {} },
+    preview: { newIds: ['a', 'b'], updatedIds: [], anomalyWarning: null },
+    repository: repo,
+    concurrency: 2,
+  }), /429 exhausted/)
+
+  assert.equal(secondUploadFinished, true)
+  assert.equal(indexSaved, false)
+})

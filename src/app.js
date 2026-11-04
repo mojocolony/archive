@@ -29,7 +29,7 @@ import {
   renderTagsPage,
 } from './ui.js'
 
-const VERSION = '0.3.4'
+const VERSION = '0.3.5'
 const root = document.getElementById('app')
 
 const state = {
@@ -60,12 +60,14 @@ function createDropboxSession(appKey) {
   return new DropboxSession({ db, appKey })
 }
 
-async function createDropboxRepository() {
+async function createDropboxRepository({ minRequestIntervalMs = 0, onRetry = () => {} } = {}) {
   const appKey = await getAppKey()
   if (!appKey) throw new Error('Dropbox App Key is not configured')
   const session = createDropboxSession(appKey)
   return new DropboxArchiveRepository({
     getAccessToken: () => session.getAccessToken(),
+    minRequestIntervalMs,
+    onRetry,
   })
 }
 
@@ -178,7 +180,19 @@ function attachPreviewHandlers(dropboxConnected) {
     document.getElementById('live-import-progress')?.remove()
 
     try {
-      const repository = await createDropboxRepository()
+      const repository = await createDropboxRepository({
+        minRequestIntervalMs: 350,
+        onRetry({ status, attempt, maxAttempts, delayMs }) {
+          const seconds = Math.ceil(delayMs / 1000)
+          updateImportProgress({
+            label: status === 429
+              ? 'Dropbox rate limit — pausing uploads…'
+              : 'Temporary Dropbox error — retrying…',
+            detail: `Attempt ${attempt + 1} of ${maxAttempts} in approximately ${seconds} seconds. Keep this tab open.`,
+            percent: null,
+          })
+        },
+      })
       const result = await commitParsedExport({
         parsedExport: state.parsedExport,
         previousIndex: state.previousIndex,

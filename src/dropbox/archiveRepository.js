@@ -11,7 +11,27 @@ function defaultSleep(ms) {
 }
 
 function isTransientStatus(status) {
-  return status === 429 || status >= 500
+  return status === 429 || (status >= 500 && status <= 599)
+}
+
+// Dropbox may return Retry-After either as seconds or as an HTTP date.
+export function parseRetryAfterMs(value, nowMs = Date.now()) {
+  if (value == null || String(value).trim() === '') return null
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000)
+  const date = Date.parse(String(value))
+  return Number.isFinite(date) ? Math.max(0, date - nowMs) : null
+}
+
+async function serverRetryDelayMs(response, nowMs) {
+  const fromHeader = parseRetryAfterMs(response.headers?.get('Retry-After'), nowMs)
+  if (fromHeader !== null) return fromHeader
+
+  // Dropbox can put retry_after in a 429 JSON body instead of a header.
+  // Clone so the final response remains readable if all retries fail.
+  if (response.status !== 429) return null
+  const payload = await readJsonSafe(response.clone())
+  return parseRetryAfterMs(payload?.error?.retry_after ?? payload?.retry_after, nowMs)
 }
 
 function entryPath(entry) {
@@ -28,20 +48,44 @@ export class DropboxArchiveRepository {
     getAccessToken,
     fetchImpl = fetch,
     requestTimeoutMs = 45_000,
-    retryDelaysMs = [1_000, 3_000],
+    retryDelaysMs = [2_000, 4_000, 8_000, 16_000, 30_000, 60_000, 120_000, 180_000],
+    minRequestIntervalMs = 0,
     sleepImpl = defaultSleep,
+    nowMs = () => Date.now(),
+    onRetry = () => {},
   }) {
     this.getAccessToken = getAccessToken
     this.fetchImpl = fetchImpl.bind(globalThis)
     this.requestTimeoutMs = requestTimeoutMs
     this.retryDelaysMs = retryDelaysMs
+    this.minRequestIntervalMs = Math.max(0, minRequestIntervalMs)
     this.sleepImpl = sleepImpl
+    this.nowMs = nowMs
+    this.onRetry = onRetry
+    this.requestsStarted = 0
+    this.paceTail = Promise.resolve()
+  }
+
+  async paceRequest() {
+    if (this.minRequestIntervalMs <= 0) return
+    // Serialize start-time pacing across all operations sharing this repository.
+    const preceding = this.paceTail
+    let release
+    this.paceTail = new Promise(resolve => { release = resolve })
+    await preceding
+    try {
+      if (this.requestsStarted > 0) await this.sleepImpl(this.minRequestIntervalMs)
+      this.requestsStarted += 1
+    } finally {
+      release()
+    }
   }
 
   async request(url, options = {}) {
     const attempts = this.retryDelaysMs.length + 1
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await this.paceRequest()
       const accessToken = await this.getAccessToken()
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs)
@@ -58,7 +102,11 @@ export class DropboxArchiveRepository {
 
         if (isTransientStatus(response.status) && attempt < attempts - 1) {
           clearTimeout(timeoutId)
-          await this.sleepImpl(this.retryDelaysMs[attempt])
+          const serverDelay = await serverRetryDelayMs(response, this.nowMs())
+          // Even a server-requested wait of zero should not cause a hot retry loop.
+          const delayMs = Math.max(this.retryDelaysMs[attempt], serverDelay ?? 0)
+          this.onRetry({ status: response.status, attempt: attempt + 1, maxAttempts: attempts, delayMs })
+          await this.sleepImpl(delayMs)
           continue
         }
 
@@ -69,7 +117,9 @@ export class DropboxArchiveRepository {
 
         if (retryable && attempt < attempts - 1) {
           clearTimeout(timeoutId)
-          await this.sleepImpl(this.retryDelaysMs[attempt])
+          const delayMs = this.retryDelaysMs[attempt]
+          this.onRetry({ status: timedOut ? 'timeout' : 'network', attempt: attempt + 1, maxAttempts: attempts, delayMs })
+          await this.sleepImpl(delayMs)
           continue
         }
 

@@ -18,7 +18,7 @@ export async function commitParsedExport({
   importId = `import-${Date.now()}`,
   allowAnomaly = false,
   onProgress = () => {},
-  concurrency = 4,
+  concurrency = 1,
 }) {
   if (preview?.anomalyWarning && !allowAnomaly) {
     throw new Error(preview.anomalyWarning)
@@ -57,10 +57,11 @@ export async function commitParsedExport({
 
   let cursor = 0
   let completedUploads = 0
+  let uploadFailure = null
   const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, uploadTasks.length || 1))
 
   async function uploadWorker() {
-    while (true) {
+    while (!uploadFailure) {
       const index = cursor
       cursor += 1
       if (index >= uploadTasks.length) return
@@ -78,7 +79,8 @@ export async function commitParsedExport({
         await repository.saveConversationVersion(conversation)
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error)
-        throw new Error(`Failed to save “${conversation.title || 'Untitled'}” (${conversation.conversationId}): ${detail}`)
+        uploadFailure ??= new Error(`Failed to save “${conversation.title || 'Untitled'}” (${conversation.conversationId}): ${detail}`)
+        return
       }
 
       completedUploads += 1
@@ -91,7 +93,10 @@ export async function commitParsedExport({
     }
   }
 
+  // Wait for all in-flight workers before returning an error, avoiding races
+  // against an immediate resume attempt.
   await Promise.all(Array.from({ length: workerCount }, () => uploadWorker()))
+  if (uploadFailure) throw uploadFailure
 
   onProgress({ stage: 'attachments', completed: 0, total: 1 })
   await repository.saveAttachmentMetadata({
